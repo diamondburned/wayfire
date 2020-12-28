@@ -177,22 +177,22 @@ class wayfire_command : public wf::plugin_interface_t
 
     wf::option_wrapper_t<wf::config::compound_list_t<
         std::string, wf::activatorbinding_t>> repeat_bindings{
-            "command/repeatable_bindings"
-        };
+        "command/repeatable_bindings"
+    };
 
     wf::option_wrapper_t<wf::config::compound_list_t<
         std::string, wf::activatorbinding_t>> always_bindings{
-            "command/always_bindings"
-        };
+        "command/always_bindings"
+    };
 
-    std::function<void()> setup_bindings_from_config = [=]()
+    std::function<void()> setup_bindings_from_config = [=] ()
     {
         clear_bindings();
         using namespace std::placeholders;
 
-        auto regular = regular_bindings.value();
+        auto regular    = regular_bindings.value();
         auto repeatable = repeat_bindings.value();
-        auto always = always_bindings.value();
+        auto always     = always_bindings.value();
         bindings.resize(regular.size() + repeatable.size() + always.size());
         size_t i = 0;
 

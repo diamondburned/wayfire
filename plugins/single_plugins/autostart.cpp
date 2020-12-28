@@ -8,7 +8,7 @@ class wayfire_autostart
 {
     wf::option_wrapper_t<bool> autostart_wf_shell{"autostart/autostart_wf_shell"};
     wf::option_wrapper_t<wf::config::compound_list_t<std::string>>
-        autostart_entries{"autostart/autostart"};
+    autostart_entries{"autostart/autostart"};
 
   public:
     wayfire_autostart()
