@@ -25,12 +25,12 @@ const std::string grid_view_id = "grid-view";
 class grid_crossfade_transformer : public wf::view_2D
 {
   public:
-    grid_crossfade_transformer(wayfire_view view)
-        : wf::view_2D(view)
+    grid_crossfade_transformer(wayfire_view view) :
+        wf::view_2D(view)
     {
         // Create a copy of the view contents
         original_buffer.geometry = view->get_wm_geometry();
-        original_buffer.scale = view->get_output()->handle->scale;
+        original_buffer.scale    = view->get_output()->handle->scale;
 
         auto w = original_buffer.scale * original_buffer.geometry.width;
         auto h = original_buffer.scale * original_buffer.geometry.height;
@@ -72,9 +72,11 @@ class grid_crossfade_transformer : public wf::view_2D
 
         double ra;
         const double N = 2;
-        if (alpha < 0.5) {
+        if (alpha < 0.5)
+        {
             ra = std::pow(alpha * 2, 1.0 / N) / 2.0;
-        } else {
+        } else
+        {
             ra = std::pow((alpha - 0.5) * 2, N) / 2.0 + 0.5;
         }
 
@@ -113,7 +115,7 @@ class wayfire_grid_view_cdata : public wf::custom_data_t
     wf::option_wrapper_t<std::string> animation_type{"grid/type"};
     wf::option_wrapper_t<int> animation_duration{"grid/duration"};
     wf::geometry_animation_t animation{animation_duration,
-    wf::animation::smoothing::circle};
+        wf::animation::smoothing::circle};
 
   public:
     wayfire_grid_view_cdata(wayfire_view view)
@@ -168,7 +170,8 @@ class wayfire_grid_view_cdata : public wf::custom_data_t
         if (!view->get_transformer("grid-crossfade"))
         {
             view->add_transformer(
-                std::make_unique<grid_crossfade_transformer>(view), "grid-crossfade");
+                std::make_unique<grid_crossfade_transformer>(view),
+                "grid-crossfade");
         }
 
         // Start the transition
