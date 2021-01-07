@@ -1,4 +1,5 @@
 #include "wayfire/render-manager.hpp"
+#include "view/view-impl.hpp"
 #include "wayfire/signal-definitions.hpp"
 #include "wayfire/workspace-stream.hpp"
 #include "wayfire/output.hpp"
@@ -1208,6 +1209,21 @@ class wf::render_manager::impl
      */
     void schedule_drag_icon(workspace_stream_repaint_t& repaint)
     {
+        // Special case: Xwayland drag iconds
+        auto xw_dnd_icon = wf::get_xwayland_drag_icon();
+        if (xw_dnd_icon)
+        {
+            wf::point_t dnd_output = wf::origin(
+                xw_dnd_icon->get_output()->get_layout_geometry());
+            wf::point_t current_output = wf::origin(output->get_layout_geometry());
+            auto origin = wf::origin(xw_dnd_icon->get_output_geometry()) +
+                dnd_output + -current_output;
+            for (auto& child : xw_dnd_icon->enumerate_surfaces(origin))
+            {
+                schedule_surface(repaint, child.surface, child.position);
+            }
+        }
+
         auto& drag_icon = wf::get_core_impl().seat->drag_icon;
         if (renderer || !drag_icon || !drag_icon->is_mapped())
         {

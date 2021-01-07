@@ -89,8 +89,9 @@ class seat_t
     std::unique_ptr<pointer_t> lpointer;
     std::unique_ptr<touch_interface_t> touch;
 
-    // Drag icon impl
+    // Current drag icon
     std::unique_ptr<wf::drag_icon_t> drag_icon;
+    // Is dragging active. Note we can have a drag without a drag icon.
     bool drag_active = false;
 
     /** Update the position of the drag icon, if it exists */
