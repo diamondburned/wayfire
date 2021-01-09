@@ -251,7 +251,7 @@ class iwobbly_state_t
      */
     virtual void translate_model(int dx, int dy)
     {
-        LOGI("translate by ", dx, dy, bounding_box.x, bounding_box.y);
+        LOGI("translate by ", dx, " ", dy, " ", bounding_box.x, " ", bounding_box.y);
         wobbly_translate(model.get(), dx, dy);
         wobbly_add_geometry(model.get());
 
@@ -259,6 +259,9 @@ class iwobbly_state_t
         wm_geometry.y  += dy;
         bounding_box.x += dx;
         bounding_box.y += dy;
+
+        model->x += dx;
+        model->y += dy;
     }
 
   protected:
@@ -425,11 +428,13 @@ class wobbly_state_floating_t : public iwobbly_state_t
         auto new_bbox = view->get_bounding_box(wobbly_transformer_name);
         auto wm = view->get_wm_geometry();
 
+        LOGI("we have ", wm, " ", new_bbox, " ", model->x, " ", model->y);
+
         int target_x = model->x + wm.x - new_bbox.x;
         int target_y = model->y + wm.y - new_bbox.y;
         if ((target_x != wm.x) || (target_y != wm.y))
         {
-            LOGI("moving wobbly to ", model->x + wm.x - new_bbox.x,
+            LOGI("moving wobbly to ", model->x + wm.x - new_bbox.x, " ",
                 model->y + wm.y - new_bbox.y);
             view->move(model->x + wm.x - new_bbox.x, model->y + wm.y - new_bbox.y);
         }
@@ -850,16 +855,19 @@ class wayfire_wobbly : public wf::plugin_interface_t
 
         if (data->events & WOBBLY_EVENT_ACTIVATE)
         {
+            LOGI("activate");
             wobbly->wobble();
         }
 
         if (data->events & WOBBLY_EVENT_GRAB)
         {
+            LOGI("grab");
             wobbly->start_grab(data->pos);
         }
 
         if (data->events & WOBBLY_EVENT_MOVE)
         {
+            LOGI("move");
             wobbly->move(data->pos);
         }
 
@@ -870,16 +878,19 @@ class wayfire_wobbly : public wf::plugin_interface_t
 
         if (data->events & WOBBLY_EVENT_END)
         {
+            LOGI("end grab");
             wobbly->end_grab();
         }
 
         if (data->events & WOBBLY_EVENT_FORCE_TILE)
         {
+            LOGI("force tile");
             wobbly->set_force_tile(true);
         }
 
         if (data->events & WOBBLY_EVENT_UNTILE)
         {
+            LOGI("untile");
             wobbly->set_force_tile(false);
         }
     }

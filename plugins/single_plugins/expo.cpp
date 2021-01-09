@@ -7,7 +7,9 @@
 #include <wayfire/plugins/common/view-change-viewport-signal.hpp>
 #include <wayfire/plugins/common/workspace-wall.hpp>
 #include <wayfire/plugins/common/geometry-animation.hpp>
-#include <wayfire/plugins/common/move-snap-helper.hpp>
+#include <wayfire/plugins/common/move-drag-interface.hpp>
+#include <wayfire/plugins/common/shared-core-data.hpp>
+
 
 /* TODO: this file should be included in some header maybe(plugin.hpp) */
 #include <linux/input-event-codes.h>
@@ -59,16 +61,10 @@ class wayfire_expo : public wf::plugin_interface_t
     wf::option_wrapper_t<int> delimiter_offset{"expo/offset"};
     wf::geometry_animation_t zoom_animation{zoom_duration};
 
+    wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> drag_helper;
 
     std::vector<wf::activator_callback> keyboard_select_cbs;
     std::vector<wf::option_sptr_t<wf::activatorbinding_t>> keyboard_select_options;
-    wf::signal_callback_t view_removed = [=] (wf::signal_data_t *event)
-    {
-        if (get_signaled_view(event) == moving_view)
-        {
-            end_move(true);
-        }
-    };
 
     struct
     {
@@ -198,36 +194,55 @@ class wayfire_expo : public wf::plugin_interface_t
             finalize_and_exit();
         };
 
-        output->connect_signal("view-detached", &view_removed);
-        output->connect_signal("view-disappeared", &view_removed);
-
-        output->connect_signal("view-move-check", &on_view_check_move);
-        output->connect_signal("view-move-request", &on_move_request);
+        drag_helper->connect_signal("focus-output", &on_drag_output_focus);
+        drag_helper->connect_signal("done", &on_drag_done);
     }
 
-    wf::signal_connection_t on_move_request = [=] (wf::signal_data_t *data)
+    bool can_handle_drag()
     {
-        auto view = get_signaled_view(data);
-        if (!can_start_move(view))
+        LOGI("can do drag?", output->is_plugin_active(grab_interface->name));
+        return output->is_plugin_active(grab_interface->name);
+    }
+
+    wf::signal_connection_t on_drag_output_focus = [=] (auto data)
+    {
+        LOGI("on handle focus!!!!!!!!!");
+        auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
+        if ((ev->focus_output == output) && can_handle_drag())
         {
-            return;
+            auto [vw, vh] = output->workspace->get_workspace_grid_size();
+            drag_helper->set_scale(std::max(vw, vh));
         }
+    };
 
-        auto input = wf::get_core().get_touch_position(0);
-        if (std::isnan(input.x) || std::isnan(input.y))
+    wf::signal_connection_t on_drag_done = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::drag_done_signal*>(data);
+        if ((ev->focused_output == output) && can_handle_drag())
         {
-            input = wf::get_core().get_cursor_position();
+            bool same_output = ev->view->get_output() == output;
+
+            auto offset = wf::origin(output->get_layout_geometry());
+            auto local  = input_coordinates_to_output_local_coordinates(
+                ev->grab_position + -offset);
+
+            translate_wobbly(ev->view, local - (ev->grab_position - offset));
+            // auto ws = viewpo
+
+            ev->grab_position = local + offset;
+            wf::move_drag::adjust_view_on_output(ev);
+
+            if (same_output && (move_started_ws != offscreen_point))
+            {
+                view_change_viewport_signal data;
+                data.view = ev->view;
+                data.from = move_started_ws;
+                data.to   = {target_vx, target_vy};
+                output->emit_signal("view-change-viewport", &data);
+            }
+
+            move_started_ws = offscreen_point;
         }
-
-        auto og = output->get_layout_geometry();
-        input.x -= og.x;
-        input.y -= og.y;
-
-        // assume input was pressed, otherwise, move request doesn't make sense
-        this->state.button_pressed = true;
-        this->input_grab_origin    = offscreen_point;
-
-        start_move(view, {(int)input.x, (int)input.y});
     };
 
     /**
@@ -238,17 +253,8 @@ class wayfire_expo : public wf::plugin_interface_t
     {
         return view != nullptr &&
                output->is_plugin_active(grab_interface->name) &&
-               this->moving_view == nullptr;
+               drag_helper->view == nullptr;
     }
-
-    wf::signal_connection_t on_view_check_move = [=] (wf::signal_data_t *data)
-    {
-        auto ev = static_cast<wf::view_move_check_signal*>(data);
-        if (!ev->can_continue && can_start_move(ev->view))
-        {
-            ev->can_continue = true;
-        }
-    };
 
     bool activate()
     {
@@ -316,7 +322,6 @@ class wayfire_expo : public wf::plugin_interface_t
 
     void deactivate()
     {
-        end_move(false);
         start_zoom(false);
         output->workspace->set_workspace({target_vx, target_vy});
         for (size_t i = 0; i < keyboard_select_cbs.size(); i++)
@@ -346,14 +351,14 @@ class wayfire_expo : public wf::plugin_interface_t
             return;
         }
 
-        if ((state == WLR_BUTTON_RELEASED) && !this->moving_view)
+        if ((state == WLR_BUTTON_RELEASED) && !this->drag_helper->view)
         {
             this->state.button_pressed = false;
             deactivate();
         } else if (state == WLR_BUTTON_RELEASED)
         {
             this->state.button_pressed = false;
-            end_move(false);
+            this->drag_helper->handle_input_released();
         } else
         {
             this->state.button_pressed = true;
@@ -363,14 +368,18 @@ class wayfire_expo : public wf::plugin_interface_t
         }
     }
 
-#define MOVE_HELPER moving_view->get_data<wf::move_snap_helper_t>()
     const wf::point_t offscreen_point = {-10, -10};
-
     void handle_input_move(wf::point_t to)
     {
         if (!state.button_pressed)
         {
             return;
+        }
+
+        auto output_offset = wf::origin(output->get_layout_geometry());
+        if (drag_helper->view)
+        {
+            drag_helper->handle_motion(to + output_offset);
         }
 
         if (abs(to - input_grab_origin) < 5)
@@ -386,91 +395,30 @@ class wayfire_expo : public wf::plugin_interface_t
 
         if (!zoom_animation.running() && first_click)
         {
-            start_move(find_view_at_coordinates(to.x, to.y), to);
-            /* Fall through to the moving view case */
-        }
-
-        if (moving_view)
-        {
-            auto og = output->get_layout_geometry();
-            auto target_output = wf::get_core().output_layout->get_output_at(
-                og.x + to.x, og.y + to.y);
-            if (target_output != output)
+            auto view = find_view_at_coordinates(to.x, to.y);
+            if (view)
             {
-                /** First, reset moving view so that we don't remove its snap
-                 * helper when the output is changed. */
-                auto moving_view_copy = moving_view;
-                this->moving_view = nullptr;
-                start_move_on_output(moving_view_copy, target_output);
+                auto ws_coords = input_coordinates_to_output_local_coordinates(to);
+                auto bbox = view->get_bounding_box();
 
-                return;
+                view->damage();
+                // Make sure that the view is in output-local coordinates!
+                translate_wobbly(view, to - ws_coords);
+
+                auto [vw, vh] = output->workspace->get_workspace_grid_size();
+                wf::move_drag::drag_options_t opts;
+                opts.initial_scale = std::max(vw, vh);
+
+                drag_helper->start_drag(view, to + output_offset,
+                    wf::move_drag::find_relative_grab(bbox, ws_coords), opts);
+                move_started_ws = {target_vx, target_vy};
             }
-
-            int global_x = to.x, global_y = to.y;
-            input_coordinates_to_global_coordinates(global_x, global_y);
-
-            auto grid = get_grid_geometry();
-            if (!(grid & wf::point_t{global_x, global_y}))
-            {
-                return;
-            }
-
-            auto coordinates = input_coordinates_to_output_local_coordinates(to);
-            coordinates = view_local_coordinates(moving_view, coordinates);
-            MOVE_HELPER->handle_motion(coordinates);
-
-            update_target_workspace(to.x, to.y);
         }
+
+        update_target_workspace(to.x, to.y);
     }
 
-    wayfire_view moving_view;
-    wf::point_t move_started_ws;
-    void start_move(wayfire_view view, wf::point_t grab)
-    {
-        /* target workspace has been updated on the last click
-         * so it has accurate information about views' viewport */
-        if (!view)
-        {
-            return;
-        }
-
-        move_started_ws = {target_vx, target_vy};
-        moving_view     = view;
-
-        output->workspace->bring_to_front(moving_view);
-
-        wf::ensure_move_helper_at(moving_view,
-            input_coordinates_to_output_local_coordinates(grab));
-
-        wf::get_core().set_cursor("grabbing");
-    }
-
-    /**
-     * End the moving action.
-     *
-     * @param view_destroyed Whether the view was destroyed.
-     */
-    void end_move(bool view_destroyed)
-    {
-        wf::get_core().set_cursor("default");
-        if (!moving_view)
-        {
-            return;
-        }
-
-        MOVE_HELPER->handle_input_released();
-        moving_view->erase_data<wf::move_snap_helper_t>();
-        if (!view_destroyed)
-        {
-            view_change_viewport_signal data;
-            data.view = moving_view;
-            data.from = move_started_ws;
-            data.to   = {target_vx, target_vy};
-            output->emit_signal("view-change-viewport", &data);
-        }
-
-        moving_view = nullptr;
-    }
+    wf::point_t move_started_ws = offscreen_point;
 
     /**
      * Find the coordinate of the given point from output-local coordinates
@@ -557,6 +505,21 @@ class wayfire_expo : public wf::plugin_interface_t
         return nullptr;
     }
 
+    /**
+     * Find the delta from output-layout to output-local coordinates.
+     */
+    wf::point_t delta_to(wf::point_t layout)
+    {
+        auto og  = output->get_relative_geometry();
+        auto res = input_coordinates_to_output_local_coordinates(layout);
+
+        LOGI("output local are ", res);
+
+        res.x = std::floor(1.0 * res.x / og.width) * og.width;
+        res.y = std::floor(1.0 * res.y / og.height) * og.height;
+        return res;
+    }
+
     void update_target_workspace(int x, int y)
     {
         auto og = output->get_layout_geometry();
@@ -596,9 +559,6 @@ class wayfire_expo : public wf::plugin_interface_t
 
     void fini() override
     {
-        output->disconnect_signal("view-detached", &view_removed);
-        output->disconnect_signal("view-disappeared", &view_removed);
-
         if (state.active)
         {
             finalize_and_exit();

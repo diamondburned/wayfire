@@ -261,8 +261,7 @@ class wayfire_move : public wf::plugin_interface_t
 
         slot.slot_id = 0;
         this->view   = view;
-
-        move_drag_helper->start_drag(view, get_global_input_coords());
+        move_drag_helper->start_drag(view, get_global_input_coords(), {});
 
 // ensure_move_helper_at(view, get_input_coords());
 //

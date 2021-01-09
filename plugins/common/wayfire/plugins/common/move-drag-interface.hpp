@@ -1,5 +1,6 @@
 #pragma once
 
+#include <wayfire/plugins/wobbly/wobbly-signal.hpp>
 #include <wayfire/object.hpp>
 #include <wayfire/output-layout.hpp>
 #include <wayfire/nonstd/observer_ptr.h>
@@ -8,7 +9,6 @@
 #include <wayfire/util/duration.hpp>
 #include <wayfire/util/log.hpp>
 
-#include <wayfire/plugins/wobbly/wobbly-signal.hpp>
 
 namespace wf
 {
@@ -90,6 +90,19 @@ inline static wf::geometry_t find_geometry_around(
 }
 
 /**
+ * Find the position of grab relative to the view.
+ * Example: returns [0.5, 0.5] if the grab is the midpoint of the view.
+ */
+inline static wf::pointf_t find_relative_grab(
+    wf::geometry_t view, wf::point_t grab)
+{
+    return wf::pointf_t{
+        1.0 * (grab.x - view.x) / view.width,
+        1.0 * (grab.y - view.y) / view.height,
+    };
+}
+
+/**
  * A transformer used while dragging.
  *
  * It is primarily used to scale the view is a plugin needs it, and also to keep it
@@ -137,8 +150,8 @@ class scale_around_grab_t : public wf::view_transformer_t
         auto gy = view.y + view.height * relative_grab.y;
 
         return {
-            (point.x - gx) * scale_factor + gx,
-            (point.y - gy) * scale_factor + gy,
+            (point.x - gx) * factor + gx,
+            (point.y - gy) * factor + gy,
         };
     }
 
@@ -157,11 +170,11 @@ class scale_around_grab_t : public wf::view_transformer_t
     wf::geometry_t get_bounding_box(wf::geometry_t view,
         wf::geometry_t region) override
     {
-        int w = std::floor(view.width * scale_factor);
-        int h = std::floor(view.height * scale_factor);
+        int w = std::floor(view.width / scale_factor);
+        int h = std::floor(view.height / scale_factor);
 
         auto bb = find_geometry_around({w, h}, grab_position, relative_grab);
-        LOGI("got bb ", bb);
+        // LOGI("got bb ", bb);
         return bb;
     }
 
@@ -259,6 +272,11 @@ class output_data_t : public noncopyable_t, public custom_data_t
     };
 };
 
+struct drag_options_t
+{
+    double initial_scale = 1.0;
+};
+
 /**
  * An object for storing global move drag data (i.e shared between all outputs).
  *
@@ -267,7 +285,16 @@ class output_data_t : public noncopyable_t, public custom_data_t
 class core_drag_t : public signal_provider_t
 {
   public:
-    void start_drag(wayfire_view view, wf::point_t grab_position)
+    /**
+     * Start drag.
+     *
+     * @param view The view which is being dragged.
+     * @param grab_position The position of the input, in output-layout coordinates.
+     * @param relative The position of the grab_position relative to view.
+     */
+    void start_drag(wayfire_view view, wf::point_t grab_position,
+        wf::pointf_t relative,
+        const drag_options_t& options)
     {
         this->view = view;
 
@@ -275,23 +302,21 @@ class core_drag_t : public signal_provider_t
         auto tr = std::make_unique<scale_around_grab_t>();
         this->transformer = {tr};
 
-        auto bbox = view->get_bounding_box();
         auto output_offset = wf::origin(view->get_output()->get_layout_geometry());
-        bbox = bbox + output_offset;
-        tr->relative_grab.x = 1.0 * (grab_position.x - bbox.x) / bbox.width;
-        tr->relative_grab.y = 1.0 * (grab_position.y - bbox.y) / bbox.height;
-        transformer->grab_position = grab_position;
-        tr->scale_factor.animate(1.0, 1.0);
+        tr->relative_grab = relative;
+        tr->grab_position = grab_position;
+        tr->scale_factor.animate(options.initial_scale, options.initial_scale);
 
         view->add_transformer(std::move(tr), move_drag_transformer);
-        translate_wobbly(view, output_offset);
 
         // Hide the view, we will render it as an overlay
         view->set_visible(false);
         view->damage();
 
+        translate_wobbly(view, output_offset);
+
         // TODO: make this configurable!
-        start_wobbly(view, grab_position.x, grab_position.y);
+        start_wobbly_rel(view, relative);
 
         // Setup overlay hooks
         for (auto& output : wf::get_core().output_layout->get_outputs())
@@ -299,6 +324,16 @@ class core_drag_t : public signal_provider_t
             output->store_data(
                 std::make_unique<output_data_t>(output, view));
         }
+
+        wf::get_core().set_cursor("grabbing");
+    }
+
+    void start_drag(wayfire_view view, wf::point_t grab_position,
+        const drag_options_t& options)
+    {
+        auto bbox = view->get_bounding_box();
+        start_drag(view, grab_position,
+            find_relative_grab(bbox, grab_position), options);
     }
 
     void handle_motion(wf::point_t to)
@@ -354,7 +389,6 @@ class core_drag_t : public signal_provider_t
 
   private:
     nonstd::observer_ptr<scale_around_grab_t> transformer;
-
     void update_current_output(wf::point_t grab)
     {
         wf::pointf_t origin = {1.0 * grab.x, 1.0 * grab.y};
