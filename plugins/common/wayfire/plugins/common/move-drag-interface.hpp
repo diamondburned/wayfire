@@ -284,6 +284,16 @@ struct drag_options_t
  */
 class core_drag_t : public signal_provider_t
 {
+    /**
+     * Rebuild the wobbly model after a change in the scaling, so that the wobbly
+     * model does not try to animate the scaling change itself.
+     */
+    void rebuild_wobbly(wayfire_view view, wf::point_t grab, wf::pointf_t relative)
+    {
+        auto dim = wf::dimensions(view->get_bounding_box("wobbly"));
+        modify_wobbly(view, find_geometry_around(dim, grab, relative));
+    }
+
   public:
     /**
      * Start drag.
@@ -302,7 +312,7 @@ class core_drag_t : public signal_provider_t
         auto tr = std::make_unique<scale_around_grab_t>();
         this->transformer = {tr};
 
-        auto output_offset = wf::origin(view->get_output()->get_layout_geometry());
+// auto output_offset = wf::origin(view->get_output()->get_layout_geometry());
         tr->relative_grab = relative;
         tr->grab_position = grab_position;
         tr->scale_factor.animate(options.initial_scale, options.initial_scale);
@@ -313,7 +323,8 @@ class core_drag_t : public signal_provider_t
         view->set_visible(false);
         view->damage();
 
-        translate_wobbly(view, output_offset);
+        // Make sure that wobbly has the correct geometry from the start!
+        rebuild_wobbly(view, grab_position, relative);
 
         // TODO: make this configurable!
         start_wobbly_rel(view, relative);
@@ -365,6 +376,14 @@ class core_drag_t : public signal_provider_t
 
         // Reset wobbly and leave it in output-LOCAL coordinates
         end_wobbly(view);
+
+        // Important! If the view scale was not 1.0, the wobbly model needs to be
+        // updated with the new size. Since this is an artificial resize, we need
+        // to make sure that the resize happens smoothly.
+        rebuild_wobbly(view, data.grab_position, data.relative_grab);
+
+        // Put wobbly back in output-local space, the plugins will take it from
+        // here.
         translate_wobbly(view,
             -wf::origin(view->get_output()->get_layout_geometry()));
 
@@ -402,6 +421,7 @@ class core_drag_t : public signal_provider_t
 
             current_output    = output;
             data.focus_output = output;
+            wf::get_core().focus_output(output);
             emit_signal("focus-output", &data);
         }
     }
@@ -426,7 +446,14 @@ inline void adjust_view_on_output(drag_done_signal *ev)
     auto grab = ev->grab_position + output_delta;
     bbox = wf::move_drag::find_geometry_around(
         wf::dimensions(bbox), grab, ev->relative_grab);
-    ev->view->move(bbox.x + wm_offset.x, bbox.y + wm_offset.y);
+
+    wf::point_t target = wf::origin(bbox) + wm_offset;
+
+    // Important: wobbly will attempt to translate the view when changing geometry.
+    // That's why we need to make sure to "counter" the effect here.
+    // translate_wobbly(ev->view, wf::origin(wm) - target);
+
+    ev->view->move(target.x, target.y);
 }
 }
 }

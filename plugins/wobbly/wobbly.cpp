@@ -243,7 +243,7 @@ class iwobbly_state_t
         view(v), model(m)
     {
         wm_geometry  = v->get_wm_geometry();
-        bounding_box = {0, 0, 1, 1};
+        bounding_box = {model->x, model->y, model->width, model->height};
     }
 
     /**
@@ -262,6 +262,27 @@ class iwobbly_state_t
 
         model->x += dx;
         model->y += dy;
+    }
+
+    virtual void update_base_geometry(wf::geometry_t base)
+    {
+        LOGI("updating base geometry from ", bounding_box, " to ", base);
+        wobbly_scale(model.get(),
+            1.0 * base.width / bounding_box.width,
+            1.0 * base.height / bounding_box.height);
+        wobbly_translate(model.get(),
+            base.x - bounding_box.x,
+            base.y - bounding_box.y);
+        wobbly_resize(model.get(),
+            base.width,
+            base.height);
+
+        this->bounding_box = base;
+
+        model->x     = base.x;
+        model->y     = base.y;
+        model->width = base.width;
+        model->height = base.height;
     }
 
   protected:
@@ -319,10 +340,11 @@ class wobbly_state_grabbed_t : public iwobbly_state_t
         auto old_bbox = bounding_box;
         iwobbly_state_t::handle_frame();
 
-        if (old_bbox != bounding_box)
+        if (wf::dimensions(old_bbox) != wf::dimensions(bounding_box))
         {
             /* Directly accept new size, but keep position,
              * because it is managed by the grab. */
+            LOGI("resizing ", old_bbox, " -> ", bounding_box);
             wobbly_resize(model.get(), bounding_box.width, bounding_box.height);
         }
     }
@@ -428,7 +450,7 @@ class wobbly_state_floating_t : public iwobbly_state_t
         auto new_bbox = view->get_bounding_box(wobbly_transformer_name);
         auto wm = view->get_wm_geometry();
 
-        LOGI("we have ", wm, " ", new_bbox, " ", model->x, " ", model->y);
+        // LOGI("we have ", wm, " ", new_bbox, " ", model->x, " ", model->y);
 
         int target_x = model->x + wm.x - new_bbox.x;
         int target_y = model->y + wm.y - new_bbox.y;
@@ -439,9 +461,9 @@ class wobbly_state_floating_t : public iwobbly_state_t
             view->move(model->x + wm.x - new_bbox.x, model->y + wm.y - new_bbox.y);
         }
 
-        if ((new_bbox.width != this->bounding_box.width) ||
-            (new_bbox.height != this->bounding_box.height))
+        if (wf::dimensions(new_bbox) != wf::dimensions(this->bounding_box))
         {
+            LOGI("resizing wobbly from ", this->bounding_box, " to ", new_bbox);
             wobbly_resize(model.get(), new_bbox.width, new_bbox.height);
         }
 
@@ -477,10 +499,11 @@ class wobbly_state_free_t : public iwobbly_state_t
         auto old_bbox = bounding_box;
         iwobbly_state_t::handle_frame();
 
-        if (old_bbox != bounding_box)
+        if (wf::dimensions(old_bbox) != wf::dimensions(bounding_box))
         {
             wobbly_set_top_anchor(model.get(), bounding_box.x, bounding_box.y,
                 bounding_box.width, bounding_box.height);
+            LOGI("resizing wobbly from ", old_bbox, " to ", bounding_box);
             wobbly_resize(model.get(), bounding_box.width, bounding_box.height);
         }
     }
@@ -504,18 +527,22 @@ class wf_wobbly : public wf::view_transformer_t
 
     wf::signal_callback_t view_state_changed = [=] (wf::signal_data_t*)
     {
+        LOGI("State changed!");
         update_wobbly_state(false, {0, 0}, false);
     };
 
     wf::signal_callback_t view_geometry_changed = [=] (wf::signal_data_t *data)
     {
         auto sig = static_cast<wf::view_geometry_changed_signal*>(data);
+        LOGI("wm geometry changed! ", sig->old_geometry,
+            sig->view->get_wm_geometry());
         state->handle_wm_geometry(sig->old_geometry);
     };
 
     wf::signal_callback_t view_output_changed = [=] (wf::signal_data_t *data)
     {
         auto sig = static_cast<wf::_output_signal*>(data);
+        LOGI("view output changed!!!");
 
         if (!view->get_output())
         {
@@ -618,6 +645,7 @@ class wf_wobbly : public wf::view_transformer_t
     void update_model()
     {
         view->damage();
+        // LOGI("updating model: ", view->get_bounding_box("wobbly"));
 
         /* It is possible that the wobbly state needs to adjust view geometry.
          * We do not want it to get feedback from itself */
@@ -788,6 +816,11 @@ class wf_wobbly : public wf::view_transformer_t
         model->synced = 0;
     }
 
+    void update_base_geometry(wf::geometry_t g)
+    {
+        state->update_base_geometry(g);
+    }
+
     void destroy_self()
     {
         view->pop_transformer("wobbly");
@@ -892,6 +925,12 @@ class wayfire_wobbly : public wf::plugin_interface_t
         {
             LOGI("untile");
             wobbly->set_force_tile(false);
+        }
+
+        if (data->events & WOBBLY_EVENT_SCALE)
+        {
+            LOGI("scale");
+            wobbly->update_base_geometry(data->geometry);
         }
     }
 

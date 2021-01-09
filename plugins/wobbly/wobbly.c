@@ -595,13 +595,37 @@ void wobbly_add_geometry(struct wobbly_surface *surface)
 
 void wobbly_resize(struct wobbly_surface *surface, int width, int height)
 {
+    int   gridX, gridY, i = 0;
+    float hpad, vpad;
+
     WobblyWindow *ww = surface->ww;
 
     surface->synced = 0;
     ww->wobbly |= WobblyInitial;
 
-    if (ww->model)
-        modelInitSprings(ww->model, width, height);
+    hpad = ((float) width) / (GRID_WIDTH  - 1);
+    vpad = ((float) height) / (GRID_HEIGHT - 1);
+
+    for (gridY = 0; gridY < GRID_HEIGHT; gridY++)
+    {
+        for (gridX = 0; gridX < GRID_WIDTH; gridX++)
+        {
+            if (gridX > 0)
+            {
+                ww->model->springs[i].offset.x = hpad;
+                ++i;
+            }
+
+            if (gridY > 0)
+            {
+                ww->model->springs[i].offset.y = vpad;
+                ++i;
+            }
+        }
+    }
+
+//    if (ww->model)
+ //       modelInitSprings(ww->model, width, height);
 
     ww->grab_dx = (ww->grab_dx * width) / surface->width;
     ww->grab_dy = (ww->grab_dy * height) / surface->height;
@@ -820,6 +844,29 @@ void wobbly_translate(struct wobbly_surface *surface, int dx, int dy)
         ww->model->topLeft.y += dy;
         ww->model->bottomRight.x += dx;
         ww->model->bottomRight.y += dy;
+    }
+}
+
+static void scale(float origin, float *x, double scale)
+{
+    *x = (*x - origin) * scale + origin;
+}
+
+void wobbly_scale(struct wobbly_surface *surface, double dx, double dy)
+{
+    WobblyWindow *ww = surface->ww;
+    if (wobblyEnsureModel(surface))
+    {
+        for (int i = 0; i < ww->model->numObjects; i++)
+        {
+            scale(surface->x, &ww->model->objects[i].position.x, dx);
+            scale(surface->y, &ww->model->objects[i].position.y, dy);
+        }
+
+        scale(surface->x, &ww->model->topLeft.x, dx);
+        scale(surface->y, &ww->model->topLeft.y, dy);
+        scale(surface->x, &ww->model->bottomRight.x, dx);
+        scale(surface->y, &ww->model->bottomRight.y, dy);
     }
 }
 
