@@ -653,6 +653,13 @@ class wf_wobbly : public wf::view_transformer_t
         OpenGL::render_end();
     }
 
+    bool force_tile = false;
+    void set_force_tile(bool force_tile)
+    {
+        this->force_tile = force_tile;
+        update_wobbly_state(false, {0, 0}, false);
+    }
+
     /**
      * Update the current wobbly state based on:
      * 1. View state (tiled & fullscreen)
@@ -665,7 +672,7 @@ class wf_wobbly : public wf::view_transformer_t
      */
     void update_wobbly_state(bool start_grab, wf::point_t grab, bool end_grab)
     {
-        bool tiled = view->tiled_edges || view->fullscreen;
+        bool tiled = (view->tiled_edges || view->fullscreen) || force_tile;
         bool was_grabbed =
             (state->get_wobbly_state() == wf::WOBBLY_STATE_GRABBED ||
                 state->get_wobbly_state() == wf::WOBBLY_STATE_TILED_GRABBED);
