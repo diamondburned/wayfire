@@ -15,52 +15,12 @@
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/plugins/common/preview-indication.hpp>
 
+#include <wayfire/plugins/common/shared-core-data.hpp>
+#include <wayfire/plugins/common/move-drag-interface.hpp>
+
+
 #include "snap_signal.hpp"
-#include <wayfire/plugins/common/move-snap-helper.hpp>
 #include <wayfire/plugins/common/view-change-viewport-signal.hpp>
-
-class wf_move_mirror_view : public wf::mirror_view_t
-{
-    int _dx, _dy;
-    wf::geometry_t geometry;
-
-  public:
-
-    wf_move_mirror_view(wayfire_view view, wf::output_t *output, int dx, int dy) :
-        wf::mirror_view_t(view), _dx(dx), _dy(dy)
-    {
-        set_output(output);
-        get_output()->workspace->add_view(self(), wf::LAYER_WORKSPACE);
-        emit_map_state_change(this);
-    }
-
-    virtual wf::geometry_t get_output_geometry()
-    {
-        if (base_view)
-        {
-            geometry = base_view->get_bounding_box() + wf::point_t{_dx, _dy};
-        }
-
-        return geometry;
-    }
-
-    /* By default show animation. If move doesn't want it, it will reset this
-     * flag.  Plus, we want to show animation if the view itself is destroyed
-     * (and in this case unmap comes not from move, but from the mirror-view
-     * implementation) */
-    bool show_animation = true;
-
-    virtual void close()
-    {
-        if (show_animation)
-        {
-            emit_view_pre_unmap();
-        }
-
-        wf::mirror_view_t::close();
-    }
-};
-
 
 class wayfire_move : public wf::plugin_interface_t
 {
@@ -87,7 +47,16 @@ class wayfire_move : public wf::plugin_interface_t
 
     wf::wl_timer workspace_switch_timer;
 
-#define MOVE_HELPER view->get_data<wf::move_snap_helper_t>()
+    wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> move_drag_helper;
+
+    wf::signal_connection_t on_drag_output_focus = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
+        if (ev->focus_output == output)
+        {
+            move_drag_helper->set_scale(1.0);
+        }
+    };
 
   public:
     void init() override
@@ -160,15 +129,15 @@ class wayfire_move : public wf::plugin_interface_t
             std::bind(std::mem_fn(&wayfire_move::move_requested), this, _1);
         output->connect_signal("view-move-request", &move_request);
 
-        view_destroyed = [=] (wf::signal_data_t *data)
-        {
-            if (get_signaled_view(data) == view)
-            {
-                input_pressed(WLR_BUTTON_RELEASED, true);
-            }
-        };
-        output->connect_signal("view-disappeared", &view_destroyed);
-        output->connect_signal("view-move-check", &on_view_check_move);
+        // view_destroyed = [=] (wf::signal_data_t *data)
+        // {
+        // if (get_signaled_view(data) == view)
+        // {
+        // input_pressed(WLR_BUTTON_RELEASED, true);
+        // }
+        // };
+        // output->connect_signal("view-disappeared", &view_destroyed);
+        // output->connect_signal("view-move-check", &on_view_check_move);
     }
 
     void move_requested(wf::signal_data_t *data)
@@ -186,14 +155,14 @@ class wayfire_move : public wf::plugin_interface_t
         initiate(view);
     }
 
-    wf::signal_connection_t on_view_check_move = [=] (wf::signal_data_t *data)
-    {
-        auto ev = static_cast<wf::view_move_check_signal*>(data);
-        if (!ev->can_continue && can_move_view(ev->view))
-        {
-            ev->can_continue = true;
-        }
-    };
+// wf::signal_connection_t on_view_check_move = [=] (wf::signal_data_t *data)
+// {
+// auto ev = static_cast<wf::view_move_check_signal*>(data);
+// if (!ev->can_continue && can_move_view(ev->view))
+// {
+// ev->can_continue = true;
+// }
+// };
 
     /**
      * Calculate plugin activation flags for the view.
@@ -270,18 +239,23 @@ class wayfire_move : public wf::plugin_interface_t
             return false;
         }
 
-        ensure_move_helper_at(view, get_input_coords());
+        slot.slot_id = 0;
+        this->view   = view;
 
-        output->focus_view(view, true);
-        if (enable_snap)
-        {
-            slot.slot_id = 0;
-        }
+        move_drag_helper->start_drag(view, get_global_input_coords());
 
-        this->view = view;
-        output->render->set_redraw_always();
-        update_multi_output();
-
+// ensure_move_helper_at(view, get_input_coords());
+//
+// output->focus_view(view, true);
+// if (enable_snap)
+// {
+// slot.slot_id = 0;
+// }
+//
+// this->view = view;
+// output->render->set_redraw_always();
+// update_multi_output();
+//
         return true;
     }
 
@@ -289,7 +263,7 @@ class wayfire_move : public wf::plugin_interface_t
     {
         grab_interface->ungrab();
         output->deactivate_plugin(grab_interface);
-        output->render->set_redraw_always(false);
+        // output->render->set_redraw_always(false);
     }
 
     void input_pressed(uint32_t state, bool view_destroyed)
@@ -299,50 +273,51 @@ class wayfire_move : public wf::plugin_interface_t
             return;
         }
 
+        move_drag_helper->handle_input_released();
         deactivate();
 
         /* The view was moved to another output or was destroyed,
          * we don't have to do anything more */
         if (view_destroyed)
         {
-            view->erase_data<wf::move_snap_helper_t>();
+            // view->erase_data<wf::move_snap_helper_t>();
             this->view = nullptr;
 
             return;
         }
 
-        MOVE_HELPER->handle_input_released();
+        // MOVE_HELPER->handle_input_released();
 
-        /* Delete any mirrors we have left, showing an animation */
-        delete_mirror_views(true);
+        ///* Delete any mirrors we have left, showing an animation */
+        // delete_mirror_views(true);
 
-        /* Don't do snapping, etc for shell views */
-        if (view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT)
-        {
-            view->erase_data<wf::move_snap_helper_t>();
-            this->view = nullptr;
-            return;
-        }
+        ///* Don't do snapping, etc for shell views */
+        // if (view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT)
+        // {
+        // view->erase_data<wf::move_snap_helper_t>();
+        // this->view = nullptr;
+        // return;
+        // }
 
-        if (enable_snap && (slot.slot_id != 0))
-        {
-            snap_signal data;
-            data.view = view;
-            data.slot = (slot_type)slot.slot_id;
-            output->emit_signal("view-snap", &data);
+        // if (enable_snap && (slot.slot_id != 0))
+        // {
+        // snap_signal data;
+        // data.view = view;
+        // data.slot = (slot_type)slot.slot_id;
+        // output->emit_signal("view-snap", &data);
 
-            /* Update slot, will hide the preview as well */
-            update_slot(0);
-        }
+        ///* Update slot, will hide the preview as well */
+        // update_slot(0);
+        // }
 
-        view_change_viewport_signal workspace_may_changed;
-        workspace_may_changed.view = this->view;
-        workspace_may_changed.to   = output->workspace->get_current_workspace();
-        workspace_may_changed.old_viewport_invalid = false;
-        output->emit_signal("view-change-viewport", &workspace_may_changed);
+        // view_change_viewport_signal workspace_may_changed;
+        // workspace_may_changed.view = this->view;
+        // workspace_may_changed.to   = output->workspace->get_current_workspace();
+        // workspace_may_changed.old_viewport_invalid = false;
+        // output->emit_signal("view-change-viewport", &workspace_may_changed);
 
-        view->erase_data<wf::move_snap_helper_t>();
-        this->view = nullptr;
+        // view->erase_data<wf::move_snap_helper_t>();
+        // this->view = nullptr;
     }
 
     /* Calculate the slot to which the view would be snapped if the input
@@ -546,153 +521,14 @@ class wayfire_move : public wf::plugin_interface_t
         return coords;
     }
 
-    struct wf_move_output_state : public wf::custom_data_t
-    {
-        nonstd::observer_ptr<wf_move_mirror_view> view;
-    };
-
-    std::string get_data_name()
-    {
-        return "wf-move-" + output->to_string();
-    }
-
-    /* Delete the mirror view on the given output.
-     * If the view hasn't been unmapped yet, then do so. */
-    void delete_mirror_view_from_output(wf::output_t *wo,
-        bool show_animation, bool already_unmapped)
-    {
-        if (!wo->has_data(get_data_name()))
-        {
-            return;
-        }
-
-        auto view = wo->get_data<wf_move_output_state>(get_data_name())->view;
-        /* We erase so early so that in case of already_unmapped == false,
-         * we don't do this again for the unmap signal which will be triggered
-         * by our view->unmap() call */
-        wo->erase_data(get_data_name());
-
-        view->show_animation = show_animation;
-        if (!already_unmapped)
-        {
-            view->close();
-        }
-
-        wo->erase_data(get_data_name());
-    }
-
-    /* Destroys all mirror views created by this plugin */
-    void delete_mirror_views(bool show_animation)
-    {
-        for (auto& wo : wf::get_core().output_layout->get_outputs())
-        {
-            delete_mirror_view_from_output(wo,
-                show_animation, false);
-        }
-    }
-
-    wf::signal_connection_t handle_mirror_view_unmapped =
-        [=] (wf::signal_data_t *data)
-    {
-        auto view = get_signaled_view(data);
-        delete_mirror_view_from_output(view->get_output(), true, true);
-        view->disconnect_signal(&handle_mirror_view_unmapped);
-    };
-
-    /* Creates a new mirror view on output wo if it doesn't exist already */
-    void ensure_mirror_view(wf::output_t *wo)
-    {
-        if (wo->has_data(get_data_name()))
-        {
-            return;
-        }
-
-        auto base_output   = output->get_layout_geometry();
-        auto mirror_output = wo->get_layout_geometry();
-
-        auto mirror = new wf_move_mirror_view(view, wo,
-            base_output.x - mirror_output.x,
-            base_output.y - mirror_output.y);
-
-        wf::get_core().add_view(
-            std::unique_ptr<wf::view_interface_t>(mirror));
-
-        auto wo_state = wo->get_data_safe<wf_move_output_state>(get_data_name());
-        wo_state->view = nonstd::make_observer(mirror);
-        mirror->connect_signal("unmapped", &handle_mirror_view_unmapped);
-    }
-
-    /* Update the view position, with respect to the multi-output configuration
-     *
-     * Views in wayfire are visible on only a single output. However, when the user
-     * moves the view between outputs, it is desirable to temporarily show the view
-     * on all outputs whose boundaries it crosses. We emulate this behavior by
-     * creating
-     * mirror views of the view being moved, while fading them in and out when needed
-     * */
-    void update_multi_output()
-    {
-        /* We are not in the join_view mode, so we can move dialogues
-         * independently of their main view. However, we do not support
-         * moving dialogues to a different output than their main view. */
-        if (this->view && this->view->parent)
-        {
-            return;
-        }
-
-        /* The mouse isn't on our output anymore -> transfer ownership of
-         * the move operation to the other output where the input currently is */
-        auto global = get_global_input_coords();
-        auto target_output =
-            wf::get_core().output_layout->get_output_at(global.x, global.y);
-
-        if (target_output != output)
-        {
-            /* The move plugin on the next output will create new mirror views */
-            delete_mirror_views(false);
-
-            if (wf::can_start_move_on_output(view, target_output))
-            {
-                /** First, reset moving view so that we don't remove its snap
-                 * helper when the output is changed. */
-                deactivate();
-                auto view_copy = this->view;
-                this->view = nullptr;
-                wf::start_move_on_output(view_copy, target_output);
-            } else
-            {
-                input_pressed(WLR_BUTTON_RELEASED, false);
-            }
-
-            return;
-        }
-
-        auto current_og = output->get_layout_geometry();
-        auto current_geometry =
-            view->get_bounding_box() + wf::point_t{current_og.x, current_og.y};
-
-        for (auto& wo : wf::get_core().output_layout->get_outputs())
-        {
-            if (wo == output) // skip the same output
-            {
-                continue;
-            }
-
-            auto og = output->get_layout_geometry();
-            /* A view is visible on the other output as well */
-            if (og & current_geometry)
-            {
-                ensure_mirror_view(wo);
-            }
-        }
-    }
-
     void handle_input_motion()
     {
-        auto input = get_input_coords();
-        MOVE_HELPER->handle_motion(get_input_coords());
+        move_drag_helper->handle_motion(get_global_input_coords());
 
-        update_multi_output();
+        auto input = get_input_coords();
+        // MOVE_HELPER->handle_motion(get_input_coords());
+
+        // update_multi_output();
         /* View might get destroyed when updating multi-output */
         if (view)
         {
@@ -701,11 +537,11 @@ class wayfire_move : public wf::plugin_interface_t
             // retain their fullscreen state (but they can be moved to other
             // workspaces). Unsetting the fullscreen state can break some
             // Xwayland games.
-            if (enable_snap && !MOVE_HELPER->is_view_fixed() &&
-                !this->view->fullscreen)
-            {
-                update_slot(calc_slot(input.x, input.y));
-            }
+            // if (enable_snap && !MOVE_HELPER->is_view_fixed() &&
+            // !this->view->fullscreen)
+            // {
+            // update_slot(calc_slot(input.x, input.y));
+            // }
         } else
         {
             /* View was destroyed, hide slot */
@@ -718,7 +554,6 @@ class wayfire_move : public wf::plugin_interface_t
         if (grab_interface->is_grabbed())
         {
             input_pressed(WLR_BUTTON_RELEASED, false);
-            delete_mirror_views(false);
         }
 
         output->rem_binding(&activate_binding);
