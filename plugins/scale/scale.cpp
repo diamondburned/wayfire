@@ -145,10 +145,19 @@ class wayfire_scale : public wf::plugin_interface_t
             finalize();
         };
 
+        grab_interface->callbacks.pointer.motion = [=] (int32_t x, int32_t y)
+        {
+            auto offset = wf::origin(output->get_layout_geometry());
+            process_motion(offset + wf::point_t{x, y});
+        };
+
         interact.set_callback(interact_option_changed);
         allow_scale_zoom.set_callback(allow_scale_zoom_option_changed);
 
         setup_workspace_switching();
+
+        drag_helper->connect_signal("focus-output", &on_drag_output_focus);
+        drag_helper->connect_signal("done", &on_drag_done);
     }
 
     void setup_workspace_switching()
@@ -480,6 +489,11 @@ class wayfire_scale : public wf::plugin_interface_t
             return;
         }
 
+        if (drag_helper->view)
+        {
+            drag_helper->handle_input_released();
+        }
+
         auto view = wf::get_core().get_view_at(input_position);
         if (!view || (last_selected_view != view))
         {
@@ -525,6 +539,9 @@ class wayfire_scale : public wf::plugin_interface_t
         {
             drag_helper->start_drag(last_selected_view, to);
             last_selected_view = nullptr;
+        } else if (drag_helper->view)
+        {
+            drag_helper->handle_motion(to);
         }
     }
 
@@ -1227,6 +1244,35 @@ class wayfire_scale : public wf::plugin_interface_t
         }
 
         finalize();
+    };
+
+    bool can_handle_drag()
+    {
+        return output->is_plugin_active(this->grab_interface->name);
+    }
+
+    wf::signal_connection_t on_drag_output_focus = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
+        if ((ev->focus_output == output) && can_handle_drag())
+        {
+            drag_helper->set_scale(0.8);
+        }
+    };
+
+    wf::signal_connection_t on_drag_done = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::drag_done_signal*>(data);
+        if ((ev->focused_output == output) && can_handle_drag())
+        {
+            if (ev->view->get_output() == ev->focused_output)
+            {
+                // View left on the same output, don't do anything
+                return;
+            }
+
+            wf::move_drag::adjust_view_on_output(ev);
+        }
     };
 
     /* Activate and start scale animation */

@@ -49,10 +49,18 @@ class wayfire_move : public wf::plugin_interface_t
 
     wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> move_drag_helper;
 
+    bool can_handle_drag()
+    {
+        bool yes = output->can_activate_plugin(grab_interface,
+            wf::PLUGIN_ACTIVATE_ALLOW_MULTIPLE);
+        LOGI("yes? ", yes);
+        return yes;
+    }
+
     wf::signal_connection_t on_drag_output_focus = [=] (auto data)
     {
         auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
-        if (ev->focus_output == output)
+        if ((ev->focus_output == output) && can_handle_drag())
         {
             move_drag_helper->set_scale(1.0);
         }
@@ -61,23 +69,9 @@ class wayfire_move : public wf::plugin_interface_t
     wf::signal_connection_t on_drag_done = [=] (auto data)
     {
         auto ev = static_cast<wf::move_drag::drag_done_signal*>(data);
-        if (ev->focused_output == output)
+        if ((ev->focused_output == output) && can_handle_drag())
         {
-            if (ev->view->get_output() != output)
-            {
-                auto bbox = ev->view->get_bounding_box("wobbly");
-                auto wm   = ev->view->get_wm_geometry();
-
-                wf::point_t wm_offset = wf::origin(wm) + -wf::origin(bbox);
-                auto output_delta     = -wf::origin(output->get_layout_geometry());
-
-                auto grab = ev->grab_position + output_delta;
-                bbox = wf::move_drag::find_geometry_around(
-                    wf::dimensions(bbox), grab, ev->relative_grab);
-
-                wf::get_core().move_view_to_output(ev->view, output, false);
-                ev->view->move(bbox.x + wm_offset.x, bbox.y + wm_offset.y);
-            }
+            wf::move_drag::adjust_view_on_output(ev);
         }
     };
 

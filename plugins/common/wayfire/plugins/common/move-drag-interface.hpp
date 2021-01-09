@@ -372,5 +372,27 @@ class core_drag_t : public signal_provider_t
         }
     }
 };
+
+/**
+ * Move the view to the target output and put it at the coordinates of the grab.
+ */
+inline void adjust_view_on_output(drag_done_signal *ev)
+{
+    if (ev->view->get_output() != ev->focused_output)
+    {
+        wf::get_core().move_view_to_output(ev->view, ev->focused_output, false);
+    }
+
+    auto bbox = ev->view->get_bounding_box("wobbly");
+    auto wm   = ev->view->get_wm_geometry();
+
+    wf::point_t wm_offset = wf::origin(wm) + -wf::origin(bbox);
+    auto output_delta     = -wf::origin(ev->focused_output->get_layout_geometry());
+
+    auto grab = ev->grab_position + output_delta;
+    bbox = wf::move_drag::find_geometry_around(
+        wf::dimensions(bbox), grab, ev->relative_grab);
+    ev->view->move(bbox.x + wm_offset.x, bbox.y + wm_offset.y);
+}
 }
 }
