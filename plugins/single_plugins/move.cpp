@@ -26,7 +26,6 @@ class wayfire_move : public wf::plugin_interface_t
 {
     wf::signal_callback_t move_request, view_destroyed;
     wf::button_callback activate_binding;
-    wayfire_view view;
 
     wf::option_wrapper_t<bool> enable_snap{"move/enable_snap"};
     wf::option_wrapper_t<bool> join_views{"move/join_views"};
@@ -53,7 +52,6 @@ class wayfire_move : public wf::plugin_interface_t
     {
         bool yes = output->can_activate_plugin(grab_interface,
             wf::PLUGIN_ACTIVATE_ALLOW_MULTIPLE);
-        LOGI("yes? ", yes);
         return yes;
     }
 
@@ -63,6 +61,11 @@ class wayfire_move : public wf::plugin_interface_t
         if ((ev->focus_output == output) && can_handle_drag())
         {
             move_drag_helper->set_scale(1.0);
+
+            if (!output->is_plugin_active(grab_interface->name))
+            {
+                grab_input(nullptr);
+            }
         }
     };
 
@@ -168,9 +171,6 @@ class wayfire_move : public wf::plugin_interface_t
             return;
         }
 
-        auto touch = wf::get_core().get_touch_state();
-        is_using_touch = !touch.fingers.empty();
-
         was_client_request = true;
         initiate(view);
     }
@@ -239,10 +239,10 @@ class wayfire_move : public wf::plugin_interface_t
         return output->can_activate_plugin(grab_interface, get_act_flags(view));
     }
 
-    bool initiate(wayfire_view view)
+    bool grab_input(wayfire_view view)
     {
-        view = get_target_view(view);
-        if (!can_move_view(view) || (view && (view->get_output() != output)))
+        view = view ?: move_drag_helper->view;
+        if (!view)
         {
             return false;
         }
@@ -259,8 +259,27 @@ class wayfire_move : public wf::plugin_interface_t
             return false;
         }
 
+        auto touch = wf::get_core().get_touch_state();
+        is_using_touch = !touch.fingers.empty();
+
         slot.slot_id = 0;
-        this->view   = view;
+        return true;
+    }
+
+    bool initiate(wayfire_view view)
+    {
+        view = get_target_view(view);
+        if (!can_move_view(view))
+        {
+            return false;
+        }
+
+        if (!grab_input(view))
+        {
+            return false;
+        }
+
+        // this->view   = view;
         move_drag_helper->start_drag(view, get_global_input_coords(), {});
 
 // ensure_move_helper_at(view, get_input_coords());
@@ -300,7 +319,7 @@ class wayfire_move : public wf::plugin_interface_t
         if (view_destroyed)
         {
             // view->erase_data<wf::move_snap_helper_t>();
-            this->view = nullptr;
+            // this->view = nullptr;
 
             return;
         }
@@ -349,10 +368,11 @@ class wayfire_move : public wf::plugin_interface_t
             return 0;
         }
 
-        if (view && (output->workspace->get_view_layer(view) != wf::LAYER_WORKSPACE))
-        {
-            return 0;
-        }
+        // if (view && (output->workspace->get_view_layer(view) !=
+        // wf::LAYER_WORKSPACE))
+        // {
+        // return 0;
+        // }
 
         int threshold = snap_threshold;
 
@@ -451,7 +471,7 @@ class wayfire_move : public wf::plugin_interface_t
 
         workspace_switch_timer.set_timeout(workspace_switch_after, [this, tws] ()
         {
-            output->workspace->request_workspace(tws, {this->view});
+            // output->workspace->request_workspace(tws, {this->view});
             return false;
         });
     }
@@ -528,14 +548,14 @@ class wayfire_move : public wf::plugin_interface_t
 
         /* If the currently moved view is not a toplevel view, but a child
          * view, do not move it outside its outpup */
-        if (view && view->parent)
-        {
-            double x   = coords.x;
-            double y   = coords.y;
-            auto local = output->get_relative_geometry();
-            wlr_box_closest_point(&local, x, y, &x, &y);
-            coords = {(int)x, (int)y};
-        }
+        // if (view && view->parent)
+        // {
+        // double x   = coords.x;
+        // double y   = coords.y;
+        // auto local = output->get_relative_geometry();
+        // wlr_box_closest_point(&local, x, y, &x, &y);
+        // coords = {(int)x, (int)y};
+        // }
 
         return coords;
     }
@@ -549,7 +569,7 @@ class wayfire_move : public wf::plugin_interface_t
 
         // update_multi_output();
         /* View might get destroyed when updating multi-output */
-        if (view)
+        if (false)
         {
             // Make sure that fullscreen views are not tiled.
             // We allow movement of fullscreen views but they should always

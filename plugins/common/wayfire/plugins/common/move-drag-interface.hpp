@@ -342,7 +342,8 @@ class core_drag_t : public signal_provider_t
     void start_drag(wayfire_view view, wf::point_t grab_position,
         const drag_options_t& options)
     {
-        auto bbox = view->get_bounding_box();
+        auto bbox = view->get_bounding_box() +
+            wf::origin(view->get_output()->get_layout_geometry());
         start_drag(view, grab_position,
             find_relative_grab(bbox, grab_position), options);
     }
@@ -448,11 +449,6 @@ inline void adjust_view_on_output(drag_done_signal *ev)
         wf::dimensions(bbox), grab, ev->relative_grab);
 
     wf::point_t target = wf::origin(bbox) + wm_offset;
-
-    // Important: wobbly will attempt to translate the view when changing geometry.
-    // That's why we need to make sure to "counter" the effect here.
-    // translate_wobbly(ev->view, wf::origin(wm) - target);
-
     ev->view->move(target.x, target.y);
 }
 }
