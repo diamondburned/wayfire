@@ -13,6 +13,9 @@
 #include <wayfire/touch/touch.hpp>
 #include <wayfire/plugins/scale-signal.hpp>
 
+#include <wayfire/plugins/common/move-drag-interface.hpp>
+#include <wayfire/plugins/common/shared-core-data.hpp>
+
 #include <linux/input-event-codes.h>
 
 
@@ -44,7 +47,7 @@ class wf_scale : public wf::view_2D
 
     uint32_t get_z_order() override
     {
-        return wf::TRANSFORMER_HIGHLEVEL + 1;
+        return wf::TRANSFORMER_HIGHLEVEL - 10;
     }
 };
 
@@ -113,6 +116,8 @@ class wayfire_scale : public wf::plugin_interface_t
      * all workspaces */
     bool all_workspaces;
     std::unique_ptr<wf::vswitch::control_bindings_t> workspace_bindings;
+
+    wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> drag_helper;
 
   public:
     void init() override
@@ -511,6 +516,15 @@ class wayfire_scale : public wf::plugin_interface_t
 
           default:
             break;
+        }
+    }
+
+    void process_motion(wf::point_t to)
+    {
+        if (last_selected_view)
+        {
+            drag_helper->start_drag(last_selected_view, to);
+            last_selected_view = nullptr;
         }
     }
 

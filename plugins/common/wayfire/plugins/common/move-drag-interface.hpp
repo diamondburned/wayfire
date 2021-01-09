@@ -8,6 +8,8 @@
 #include <wayfire/util/duration.hpp>
 #include <wayfire/util/log.hpp>
 
+#include <wayfire/plugins/wobbly/wobbly-signal.hpp>
+
 namespace wf
 {
 /**
@@ -33,7 +35,7 @@ namespace wf
 namespace move_drag
 {
 /**
- * name: move-drag-focus-output
+ * name: focus-output
  * on: core_drag_t
  * when: Emitted output whenever the output where the drag happens changes,
  *   including when the drag begins.
@@ -47,7 +49,7 @@ struct drag_focus_output_signal : public signal_data_t
 };
 
 /**
- * name: move-drag-done
+ * name: done
  * on: core_drag_t
  * when: Emitted after the drag operation has ended.
  */
@@ -71,6 +73,21 @@ struct drag_done_signal : public signal_data_t
      */
     wf::point_t grab_position;
 };
+
+/**
+ * Find the geometry of a view, if it has size @size, it is grabbed at point @grab,
+ * and the grab is at position @relative relative to the view.
+ */
+inline static wf::geometry_t find_geometry_around(
+    wf::dimensions_t size, wf::point_t grab, wf::pointf_t relative)
+{
+    return wf::geometry_t{
+        grab.x - (int)std::floor(relative.x * size.width),
+        grab.y - (int)std::floor(relative.y * size.height),
+        size.width,
+        size.height,
+    };
+}
 
 /**
  * A transformer used while dragging.
@@ -103,7 +120,7 @@ class scale_around_grab_t : public wf::view_transformer_t
 
     uint32_t get_z_order() override
     {
-        return wf::TRANSFORMER_BLUR - 1;
+        return wf::TRANSFORMER_HIGHLEVEL - 1;
     }
 
     wf::region_t transform_opaque_region(
@@ -140,14 +157,12 @@ class scale_around_grab_t : public wf::view_transformer_t
     wf::geometry_t get_bounding_box(wf::geometry_t view,
         wf::geometry_t region) override
     {
-        double w = view.width * scale_factor;
-        double h = view.height * scale_factor;
-        return wf::geometry_t{
-            grab_position.x - (int)std::floor(relative_grab.x * w),
-            grab_position.y - (int)std::floor(relative_grab.y * h),
-            (int)w,
-            (int)h,
-        };
+        int w = std::floor(view.width * scale_factor);
+        int h = std::floor(view.height * scale_factor);
+
+        auto bb = find_geometry_around({w, h}, grab_position, relative_grab);
+        LOGI("got bb ", bb);
+        return bb;
     }
 
     void render_with_damage(wf::texture_t src_tex, wlr_box src_box,
@@ -195,9 +210,6 @@ class output_data_t : public noncopyable_t, public custom_data_t
         // Note: bbox will be in output layout coordinates now, since this is
         // how the transformer works
         auto bbox = view->get_bounding_box();
-
-        LOGI("damaging output ",
-            output->to_string(), " ", bbox, output->get_layout_geometry());
         bbox = bbox + -wf::origin(output->get_layout_geometry());
 
         output->render->damage(bbox);
@@ -236,8 +248,6 @@ class output_data_t : public noncopyable_t, public custom_data_t
         auto fb = output->render->get_target_framebuffer();
         fb.geometry = output->get_layout_geometry();
 
-        LOGI("Rendering on output ",
-            output->to_string(), " ", fb.geometry, " ", last_bbox);
         // Convert damage from output-local coordinates (last_bbox) to
         // output-layout coords.
         wf::region_t damage;
@@ -266,15 +276,22 @@ class core_drag_t : public signal_provider_t
         this->transformer = {tr};
 
         auto bbox = view->get_bounding_box();
+        auto output_offset = wf::origin(view->get_output()->get_layout_geometry());
+        bbox = bbox + output_offset;
         tr->relative_grab.x = 1.0 * (grab_position.x - bbox.x) / bbox.width;
         tr->relative_grab.y = 1.0 * (grab_position.y - bbox.y) / bbox.height;
+        transformer->grab_position = grab_position;
         tr->scale_factor.animate(1.0, 1.0);
 
         view->add_transformer(std::move(tr), move_drag_transformer);
+        translate_wobbly(view, output_offset);
 
         // Hide the view, we will render it as an overlay
         view->set_visible(false);
         view->damage();
+
+        // TODO: make this configurable!
+        start_wobbly(view, grab_position.x, grab_position.y);
 
         // Setup overlay hooks
         for (auto& output : wf::get_core().output_layout->get_outputs())
@@ -287,6 +304,8 @@ class core_drag_t : public signal_provider_t
     void handle_motion(wf::point_t to)
     {
         transformer->grab_position = to;
+        move_wobbly(view, to.x, to.y);
+        update_current_output(to);
     }
 
     void handle_input_released()
@@ -309,12 +328,17 @@ class core_drag_t : public signal_provider_t
         view->set_visible(true);
         view->pop_transformer(move_drag_transformer);
 
+        // Reset wobbly and leave it in output-LOCAL coordinates
+        end_wobbly(view);
+        translate_wobbly(view,
+            -wf::origin(view->get_output()->get_layout_geometry()));
+
         // Reset our state
         view = nullptr;
         current_output = nullptr;
 
         // Lastly, let the plugins handle what happens on drag end.
-        emit_signal("move-drag-done", &data);
+        emit_signal("done", &data);
     }
 
     void set_scale(double new_scale)
@@ -344,7 +368,7 @@ class core_drag_t : public signal_provider_t
 
             current_output    = output;
             data.focus_output = output;
-            emit_signal("move-drag-focus-output", &data);
+            emit_signal("focus-output", &data);
         }
     }
 };

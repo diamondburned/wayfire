@@ -58,6 +58,29 @@ class wayfire_move : public wf::plugin_interface_t
         }
     };
 
+    wf::signal_connection_t on_drag_done = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::drag_done_signal*>(data);
+        if (ev->focused_output == output)
+        {
+            if (ev->view->get_output() != output)
+            {
+                auto bbox = ev->view->get_bounding_box("wobbly");
+                auto wm   = ev->view->get_wm_geometry();
+
+                wf::point_t wm_offset = wf::origin(wm) + -wf::origin(bbox);
+                auto output_delta     = -wf::origin(output->get_layout_geometry());
+
+                auto grab = ev->grab_position + output_delta;
+                bbox = wf::move_drag::find_geometry_around(
+                    wf::dimensions(bbox), grab, ev->relative_grab);
+
+                wf::get_core().move_view_to_output(ev->view, output, false);
+                ev->view->move(bbox.x + wm_offset.x, bbox.y + wm_offset.y);
+            }
+        }
+    };
+
   public:
     void init() override
     {
@@ -128,6 +151,9 @@ class wayfire_move : public wf::plugin_interface_t
         move_request =
             std::bind(std::mem_fn(&wayfire_move::move_requested), this, _1);
         output->connect_signal("view-move-request", &move_request);
+
+        move_drag_helper->connect_signal("focus-output", &on_drag_output_focus);
+        move_drag_helper->connect_signal("done", &on_drag_done);
 
         // view_destroyed = [=] (wf::signal_data_t *data)
         // {

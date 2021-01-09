@@ -1,6 +1,7 @@
 #include <wayfire/plugin.hpp>
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/core.hpp>
+#include <wayfire/util/log.hpp>
 #include <wayfire/view-transform.hpp>
 #include <wayfire/workspace-manager.hpp>
 #include <wayfire/render-manager.hpp>
@@ -250,6 +251,7 @@ class iwobbly_state_t
      */
     virtual void translate_model(int dx, int dy)
     {
+        LOGI("translate by ", dx, dy, bounding_box.x, bounding_box.y);
         wobbly_translate(model.get(), dx, dy);
         wobbly_add_geometry(model.get());
 
@@ -427,6 +429,8 @@ class wobbly_state_floating_t : public iwobbly_state_t
         int target_y = model->y + wm.y - new_bbox.y;
         if ((target_x != wm.x) || (target_y != wm.y))
         {
+            LOGI("moving wobbly to ", model->x + wm.x - new_bbox.x,
+                model->y + wm.y - new_bbox.y);
             view->move(model->x + wm.x - new_bbox.x, model->y + wm.y - new_bbox.y);
         }
 
