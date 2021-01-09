@@ -656,6 +656,7 @@ class wf_wobbly : public wf::view_transformer_t
     bool force_tile = false;
     void set_force_tile(bool force_tile)
     {
+        LOGI("Setting force tile to ", force_tile);
         this->force_tile = force_tile;
         update_wobbly_state(false, {0, 0}, false);
     }
@@ -870,6 +871,16 @@ class wayfire_wobbly : public wf::plugin_interface_t
         if (data->events & WOBBLY_EVENT_END)
         {
             wobbly->end_grab();
+        }
+
+        if (data->events & WOBBLY_EVENT_FORCE_TILE)
+        {
+            wobbly->set_force_tile(true);
+        }
+
+        if (data->events & WOBBLY_EVENT_UNTILE)
+        {
+            wobbly->set_force_tile(false);
         }
     }
 

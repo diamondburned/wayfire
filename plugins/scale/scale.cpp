@@ -12,6 +12,7 @@
 #include <wayfire/plugins/vswitch.hpp>
 #include <wayfire/touch/touch.hpp>
 #include <wayfire/plugins/scale-signal.hpp>
+#include <wayfire/plugins/wobbly/wobbly-signal.hpp>
 
 #include <wayfire/plugins/common/move-drag-interface.hpp>
 #include <wayfire/plugins/common/shared-core-data.hpp>
@@ -207,6 +208,7 @@ class wayfire_scale : public wf::plugin_interface_t
          * this is a good place to connect the geometry-changed handler */
         view->connect_signal("geometry-changed", &view_geometry_changed);
 
+        set_tiled_wobbly(view, true);
         return true;
     }
 
@@ -214,6 +216,7 @@ class wayfire_scale : public wf::plugin_interface_t
     void pop_transformer(wayfire_view view)
     {
         view->pop_transformer(transformer_name);
+        set_tiled_wobbly(view, false);
     }
 
     /* Remove scale transformers from all views */
@@ -538,6 +541,7 @@ class wayfire_scale : public wf::plugin_interface_t
         if (last_selected_view)
         {
             drag_helper->start_drag(last_selected_view, to);
+            set_tiled_wobbly(last_selected_view, false);
             last_selected_view = nullptr;
         } else if (drag_helper->view)
         {
@@ -1267,7 +1271,10 @@ class wayfire_scale : public wf::plugin_interface_t
         {
             if (ev->view->get_output() == ev->focused_output)
             {
+                LOGI("Setting tiled!!!!");
                 // View left on the same output, don't do anything
+                set_tiled_wobbly(ev->view, true);
+                layout_slots(get_views());
                 return;
             }
 
