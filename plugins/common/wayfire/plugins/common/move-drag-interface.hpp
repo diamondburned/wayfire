@@ -544,6 +544,7 @@ class core_drag_t : public signal_provider_t
         all_views.clear();
         current_output     = nullptr;
         view_held_in_place = false;
+        wf::get_core().set_cursor("default");
 
         // Lastly, let the plugins handle what happens on drag end.
         emit_signal("done", &data);
