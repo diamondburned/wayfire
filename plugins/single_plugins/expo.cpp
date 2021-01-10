@@ -215,6 +215,7 @@ class wayfire_expo : public wf::plugin_interface_t
         auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
         if ((ev->focus_output == output) && can_handle_drag())
         {
+            state.button_pressed = true;
             auto [vw, vh] = output->workspace->get_workspace_grid_size();
             drag_helper->set_scale(std::max(vw, vh));
         }
