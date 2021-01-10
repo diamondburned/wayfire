@@ -230,6 +230,10 @@ class iwobbly_state_t
     virtual void handle_wm_geometry(const wf::geometry_t& old_wm_geometry)
     {}
 
+    /** Called when the workspace is changed. */
+    virtual void handle_workspace_change(wf::point_t old, wf::point_t cur)
+    {}
+
     /** @return true if the wobbly animation is done. */
     virtual bool is_wobbly_done() const
     {
@@ -465,7 +469,7 @@ class wobbly_state_floating_t : public iwobbly_state_t
         auto new_bbox = view->get_bounding_box(wobbly_transformer_name);
         auto wm = view->get_wm_geometry();
 
-        // LOGI("we have ", wm, " ", new_bbox, " ", model->x, " ", model->y);
+        LOGI("we have ", wm, " ", new_bbox, " ", model->x, " ", model->y);
 
         int target_x = model->x + wm.x - new_bbox.x;
         int target_y = model->y + wm.y - new_bbox.y;
@@ -491,6 +495,15 @@ class wobbly_state_floating_t : public iwobbly_state_t
         auto bbox = view->get_bounding_box("wobbly");
         wobbly_set_top_anchor(model.get(),
             bbox.x, bbox.y, bbox.width, bbox.height);
+    }
+
+    void handle_workspace_change(wf::point_t old, wf::point_t cur) override
+    {
+        LOGI("workspace change from ", old, " to ", cur);
+        auto size = view->get_output()->get_screen_size();
+        auto delta = old - cur;
+        translate_model(delta.x * size.width, delta.y * size.height);
+        handle_wm_geometry(view->get_wm_geometry());
     }
 
     ewobbly_state_t get_wobbly_state() const override
@@ -521,6 +534,13 @@ class wobbly_state_free_t : public iwobbly_state_t
             LOGI("resizing wobbly from ", old_bbox, " to ", bounding_box);
             wobbly_resize(model.get(), bounding_box.width, bounding_box.height);
         }
+    }
+
+    void handle_workspace_change(wf::point_t old, wf::point_t cur) override
+    {
+        auto size = view->get_output()->get_screen_size();
+        auto delta = old - cur;
+        wobbly_translate(model.get(), delta.x * size.width, delta.y * size.height);
     }
 
     ewobbly_state_t get_wobbly_state() const override
@@ -554,6 +574,12 @@ class wf_wobbly : public wf::view_transformer_t
         state->handle_wm_geometry(sig->old_geometry);
     };
 
+    wf::signal_connection_t on_workspace_changed = [=] (auto data)
+    {
+        auto ev = static_cast<wf::workspace_changed_signal*>(data);
+        state->handle_workspace_change(ev->old_viewport, ev->new_viewport);
+    };
+
     wf::signal_callback_t view_output_changed = [=] (wf::signal_data_t *data)
     {
         auto sig = static_cast<wf::_output_signal*>(data);
@@ -579,6 +605,9 @@ class wf_wobbly : public wf::view_transformer_t
         sig->output->render->rem_effect(&pre_hook);
         view->get_output()->render->add_effect(&pre_hook,
             wf::OUTPUT_EFFECT_PRE);
+
+        on_workspace_changed.disconnect();
+        view->get_output()->connect_signal("workspace-changed", &on_workspace_changed);
     };
 
     std::unique_ptr<wobbly_surface> model;
@@ -615,6 +644,7 @@ class wf_wobbly : public wf::view_transformer_t
 
         pre_hook = [=] () { update_model(); };
         view->get_output()->render->add_effect(&pre_hook, wf::OUTPUT_EFFECT_PRE);
+        view->get_output()->connect_signal("workspace-changed", &on_workspace_changed);
 
         view->connect_signal("unmapped", &view_removed);
         view->connect_signal("tiled", &view_state_changed);
