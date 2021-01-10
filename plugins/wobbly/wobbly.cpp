@@ -194,6 +194,10 @@ class iwobbly_state_t
     virtual ~iwobbly_state_t()
     {}
 
+    /** Called when the state has been updated. */
+    virtual void handle_state_update_done()
+    {}
+
     /** Called when a grab starts */
     virtual void handle_grab_start(wf::point_t grab, bool takeover)
     {}
@@ -366,8 +370,9 @@ class wobbly_state_grabbed_t : public iwobbly_state_t
 static void wobbly_tiled_state_handle_frame(const wobbly_model_t& model,
     const wf::geometry_t& old_bbox, const wf::geometry_t& new_bbox)
 {
-    if (new_bbox != old_bbox)
+    if (wf::dimensions(new_bbox) != wf::dimensions(old_bbox))
     {
+        LOGI("forcing new geometry ", new_bbox);
         /* Bounding box (excluding the wobbly transformer) changed, this
          * means the view got resized/moved by something outside of wobbly.
          * Adjust the geometry. */
@@ -384,6 +389,11 @@ class wobbly_state_tiled_t : public iwobbly_state_t
 {
   public:
     using iwobbly_state_t::iwobbly_state_t;
+    void handle_state_update_done() override
+    {
+        wobbly_force_geometry(model.get(), bounding_box.x, bounding_box.y,
+            bounding_box.width, bounding_box.height);
+    }
 
     void handle_frame() override
     {
@@ -414,6 +424,11 @@ class wobbly_state_tiled_grabbed_t : public wobbly_state_grabbed_t
 {
   public:
     using wobbly_state_grabbed_t::wobbly_state_grabbed_t;
+    void handle_state_update_done() override
+    {
+        wobbly_force_geometry(model.get(), bounding_box.x, bounding_box.y,
+            bounding_box.width, bounding_box.height);
+    }
 
     void handle_frame() override
     {
@@ -712,6 +727,8 @@ class wf_wobbly : public wf::view_transformer_t
                 state->get_wobbly_state() == wf::WOBBLY_STATE_TILED_GRABBED);
         bool grabbed = (start_grab || was_grabbed) && !end_grab;
 
+        LOGI("next state: ", tiled, " ", grabbed);
+
         uint32_t next_state_mask = 0;
         if (tiled && grabbed)
         {
@@ -788,6 +805,7 @@ class wf_wobbly : public wf::view_transformer_t
 
         /* New state has been set up */
         this->state = std::move(next_state);
+        this->state->handle_state_update_done();
     }
 
     void start_grab(wf::point_t grab)

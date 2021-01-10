@@ -49,6 +49,18 @@ struct drag_focus_output_signal : public signal_data_t
 };
 
 /**
+ * name: snap-off
+ * on: core_drag_t
+ * when: Emitted if snap-off is enabled and the view was moved more than the
+ *   threshold.
+ */
+struct snap_off_signal : public signal_data_t
+{
+    /** The output which is focused now. */
+    wf::output_t *focus_output;
+};
+
+/**
  * name: done
  * on: core_drag_t
  * when: Emitted after the drag operation has ended.
@@ -274,6 +286,18 @@ class output_data_t : public noncopyable_t, public custom_data_t
 
 struct drag_options_t
 {
+    /**
+     * Whether to enable snap off, that is, hold the view in place until
+     * a certain threshold is reached.
+     */
+    bool enable_snap_off = false;
+
+    /**
+     * If snap-off is enabled, the amount of pixels to wait for motion until
+     * snap-off is triggered.
+     */
+    int snap_off_threshold = 0;
+
     double initial_scale = 1.0;
 };
 
@@ -306,13 +330,13 @@ class core_drag_t : public signal_provider_t
         wf::pointf_t relative,
         const drag_options_t& options)
     {
-        this->view = view;
+        this->view   = view;
+        this->params = options;
 
         // Setup view transform
         auto tr = std::make_unique<scale_around_grab_t>();
         this->transformer = {tr};
 
-// auto output_offset = wf::origin(view->get_output()->get_layout_geometry());
         tr->relative_grab = relative;
         tr->grab_position = grab_position;
         tr->scale_factor.animate(options.initial_scale, options.initial_scale);
@@ -337,6 +361,14 @@ class core_drag_t : public signal_provider_t
         }
 
         wf::get_core().set_cursor("grabbing");
+
+        // Set up snap-off
+        if (params.enable_snap_off)
+        {
+            set_tiled_wobbly(view, true);
+            grab_origin = grab_position;
+            view_held_in_place = true;
+        }
     }
 
     void start_drag(wayfire_view view, wf::point_t grab_position,
@@ -350,8 +382,34 @@ class core_drag_t : public signal_provider_t
 
     void handle_motion(wf::point_t to)
     {
-        transformer->grab_position = to;
+        if (view_held_in_place)
+        {
+            auto current_offset = to - grab_origin;
+            const int dst_sq    = current_offset.x * current_offset.x +
+                current_offset.y * current_offset.y;
+            const int thresh_sq =
+                params.snap_off_threshold * params.snap_off_threshold;
+
+            if (dst_sq >= thresh_sq)
+            {
+                view_held_in_place = false;
+                set_tiled_wobbly(view, false);
+
+                snap_off_signal data;
+                data.focus_output = current_output;
+                emit_signal("snap-off", &data);
+            }
+        }
+
+        // Update wobbly independently of the grab position.
+        // This is because while held in place, wobbly is anchored to its edges
+        // so we can still move the grabbed point without moving the view.
         move_wobbly(view, to.x, to.y);
+        if (!view_held_in_place)
+        {
+            transformer->grab_position = to;
+        }
+
         update_current_output(to);
     }
 
@@ -390,7 +448,8 @@ class core_drag_t : public signal_provider_t
 
         // Reset our state
         view = nullptr;
-        current_output = nullptr;
+        current_output     = nullptr;
+        view_held_in_place = false;
 
         // Lastly, let the plugins handle what happens on drag end.
         emit_signal("done", &data);
@@ -409,6 +468,16 @@ class core_drag_t : public signal_provider_t
 
   private:
     nonstd::observer_ptr<scale_around_grab_t> transformer;
+
+    // Current parameters
+    drag_options_t params;
+
+    // Grab origin, used for snap-off
+    wf::point_t grab_origin;
+
+    // View is held in place, waiting for snap-off
+    bool view_held_in_place = false;
+
     void update_current_output(wf::point_t grab)
     {
         wf::pointf_t origin = {1.0 * grab.x, 1.0 * grab.y};
@@ -450,6 +519,17 @@ inline void adjust_view_on_output(drag_done_signal *ev)
 
     wf::point_t target = wf::origin(bbox) + wm_offset;
     ev->view->move(target.x, target.y);
+}
+
+/**
+ * Adjust the view's state after snap-off.
+ */
+inline void adjust_view_on_snap_off(wayfire_view view)
+{
+    if (view->tiled_edges && !view->fullscreen)
+    {
+        view->tile_request(0);
+    }
 }
 }
 }

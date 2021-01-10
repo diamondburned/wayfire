@@ -786,6 +786,7 @@ void wobbly_fini(struct wobbly_surface *surface)
 void wobbly_force_geometry(struct wobbly_surface *surface,
         int x, int y, int w, int h)
 {
+    printf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ %d %d %d %d\n", x, y, w, h);
     WobblyWindow *ww = surface->ww;
 
     if (wobblyEnsureModel(surface))
@@ -811,6 +812,7 @@ void wobbly_force_geometry(struct wobbly_surface *surface,
 
 void wobbly_unenforce_geometry(struct wobbly_surface *surface)
 {
+    printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
     WobblyWindow *ww = surface->ww;
 
     if (wobblyEnsureModel(surface))

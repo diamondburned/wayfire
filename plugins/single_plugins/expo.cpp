@@ -61,6 +61,9 @@ class wayfire_expo : public wf::plugin_interface_t
     wf::option_wrapper_t<int> delimiter_offset{"expo/offset"};
     wf::geometry_animation_t zoom_animation{zoom_duration};
 
+    wf::option_wrapper_t<bool> move_enable_snap_off{"move/enable_snap_off"};
+    wf::option_wrapper_t<int> move_snap_off_threshold{"move/snap_off_threshold"};
+
     wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> drag_helper;
 
     std::vector<wf::activator_callback> keyboard_select_cbs;
@@ -195,6 +198,7 @@ class wayfire_expo : public wf::plugin_interface_t
         };
 
         drag_helper->connect_signal("focus-output", &on_drag_output_focus);
+        drag_helper->connect_signal("snap-off", &on_drag_snap_off);
         drag_helper->connect_signal("done", &on_drag_done);
     }
 
@@ -212,6 +216,15 @@ class wayfire_expo : public wf::plugin_interface_t
         {
             auto [vw, vh] = output->workspace->get_workspace_grid_size();
             drag_helper->set_scale(std::max(vw, vh));
+        }
+    };
+
+    wf::signal_connection_t on_drag_snap_off = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::snap_off_signal*>(data);
+        if ((ev->focus_output == output) && can_handle_drag())
+        {
+            wf::move_drag::adjust_view_on_snap_off(drag_helper->view);
         }
     };
 
@@ -244,17 +257,6 @@ class wayfire_expo : public wf::plugin_interface_t
             move_started_ws = offscreen_point;
         }
     };
-
-    /**
-     * Check whether we can start moving the view, i.e if expo is active and
-     * not already moving a view
-     */
-    bool can_start_move(wayfire_view view)
-    {
-        return view != nullptr &&
-               output->is_plugin_active(grab_interface->name) &&
-               drag_helper->view == nullptr;
-    }
 
     bool activate()
     {
@@ -407,7 +409,10 @@ class wayfire_expo : public wf::plugin_interface_t
 
                 auto [vw, vh] = output->workspace->get_workspace_grid_size();
                 wf::move_drag::drag_options_t opts;
-                opts.initial_scale = std::max(vw, vh);
+                opts.initial_scale   = std::max(vw, vh);
+                opts.enable_snap_off = move_enable_snap_off &&
+                    (view->fullscreen || view->tiled_edges);
+                opts.snap_off_threshold = move_snap_off_threshold;
 
                 drag_helper->start_drag(view, to + output_offset,
                     wf::move_drag::find_relative_grab(bbox, ws_coords), opts);
@@ -503,21 +508,6 @@ class wayfire_expo : public wf::plugin_interface_t
         }
 
         return nullptr;
-    }
-
-    /**
-     * Find the delta from output-layout to output-local coordinates.
-     */
-    wf::point_t delta_to(wf::point_t layout)
-    {
-        auto og  = output->get_relative_geometry();
-        auto res = input_coordinates_to_output_local_coordinates(layout);
-
-        LOGI("output local are ", res);
-
-        res.x = std::floor(1.0 * res.x / og.width) * og.width;
-        res.y = std::floor(1.0 * res.y / og.height) * og.height;
-        return res;
     }
 
     void update_target_workspace(int x, int y)

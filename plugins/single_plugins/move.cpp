@@ -34,6 +34,9 @@ class wayfire_move : public wf::plugin_interface_t
     wf::option_wrapper_t<int> workspace_switch_after{"move/workspace_switch_after"};
     wf::option_wrapper_t<wf::buttonbinding_t> activate_button{"move/activate"};
 
+    wf::option_wrapper_t<bool> move_enable_snap_off{"move/enable_snap_off"};
+    wf::option_wrapper_t<int> move_snap_off_threshold{"move/snap_off_threshold"};
+
     bool is_using_touch;
     bool was_client_request;
 
@@ -46,7 +49,7 @@ class wayfire_move : public wf::plugin_interface_t
 
     wf::wl_timer workspace_switch_timer;
 
-    wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> move_drag_helper;
+    wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> drag_helper;
 
     bool can_handle_drag()
     {
@@ -60,12 +63,21 @@ class wayfire_move : public wf::plugin_interface_t
         auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
         if ((ev->focus_output == output) && can_handle_drag())
         {
-            move_drag_helper->set_scale(1.0);
+            drag_helper->set_scale(1.0);
 
             if (!output->is_plugin_active(grab_interface->name))
             {
                 grab_input(nullptr);
             }
+        }
+    };
+
+    wf::signal_connection_t on_drag_snap_off = [=] (auto data)
+    {
+        auto ev = static_cast<wf::move_drag::snap_off_signal*>(data);
+        if ((ev->focus_output == output) && can_handle_drag())
+        {
+            wf::move_drag::adjust_view_on_snap_off(drag_helper->view);
         }
     };
 
@@ -149,8 +161,9 @@ class wayfire_move : public wf::plugin_interface_t
             std::bind(std::mem_fn(&wayfire_move::move_requested), this, _1);
         output->connect_signal("view-move-request", &move_request);
 
-        move_drag_helper->connect_signal("focus-output", &on_drag_output_focus);
-        move_drag_helper->connect_signal("done", &on_drag_done);
+        drag_helper->connect_signal("focus-output", &on_drag_output_focus);
+        drag_helper->connect_signal("snap-off", &on_drag_snap_off);
+        drag_helper->connect_signal("done", &on_drag_done);
 
         // view_destroyed = [=] (wf::signal_data_t *data)
         // {
@@ -174,15 +187,6 @@ class wayfire_move : public wf::plugin_interface_t
         was_client_request = true;
         initiate(view);
     }
-
-// wf::signal_connection_t on_view_check_move = [=] (wf::signal_data_t *data)
-// {
-// auto ev = static_cast<wf::view_move_check_signal*>(data);
-// if (!ev->can_continue && can_move_view(ev->view))
-// {
-// ev->can_continue = true;
-// }
-// };
 
     /**
      * Calculate plugin activation flags for the view.
@@ -241,7 +245,7 @@ class wayfire_move : public wf::plugin_interface_t
 
     bool grab_input(wayfire_view view)
     {
-        view = view ?: move_drag_helper->view;
+        view = view ?: drag_helper->view;
         if (!view)
         {
             return false;
@@ -279,8 +283,13 @@ class wayfire_move : public wf::plugin_interface_t
             return false;
         }
 
+        wf::move_drag::drag_options_t opts;
+        opts.enable_snap_off = move_enable_snap_off &&
+            (view->fullscreen || view->tiled_edges);
+        opts.snap_off_threshold = move_snap_off_threshold;
+
         // this->view   = view;
-        move_drag_helper->start_drag(view, get_global_input_coords(), {});
+        drag_helper->start_drag(view, get_global_input_coords(), opts);
 
 // ensure_move_helper_at(view, get_input_coords());
 //
@@ -311,7 +320,7 @@ class wayfire_move : public wf::plugin_interface_t
             return;
         }
 
-        move_drag_helper->handle_input_released();
+        drag_helper->handle_input_released();
         deactivate();
 
         /* The view was moved to another output or was destroyed,
@@ -562,7 +571,7 @@ class wayfire_move : public wf::plugin_interface_t
 
     void handle_input_motion()
     {
-        move_drag_helper->handle_motion(get_global_input_coords());
+        drag_helper->handle_motion(get_global_input_coords());
 
         auto input = get_input_coords();
         // MOVE_HELPER->handle_motion(get_input_coords());
