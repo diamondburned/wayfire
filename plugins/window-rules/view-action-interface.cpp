@@ -164,6 +164,16 @@ bool view_action_interface_t::execute(const std::string & name,
 
         LOGE("View action interface: invalid arguments for resize");
         return true;
+    } else if (name == "assign_workspace")
+    {
+        auto [ok, ws] = _validate_ws(args);
+        if (ok)
+        {
+            _assign_ws(ws);
+            return false;
+        }
+
+        return true;
     }
 
     LOGE("View action interface: Unsupported action execution requested. Name: ",
@@ -333,6 +343,37 @@ void view_action_interface_t::_set_geometry(int x, int y, int w, int h)
     _move(x, y);
 }
 
+std::tuple<bool, wf::point_t> view_action_interface_t::_validate_ws(
+    const std::vector<variant_t>& args)
+{
+    if (!this->_view->get_output())
+    {
+        return {false, {}};
+    }
+
+    if (args.size() != 2)
+    {
+        LOGE("Invalid workspace identifier, expected <x> <y>");
+    }
+
+    auto [ok1, x] = _expect_int(args, 0);
+    auto [ok2, y] = _expect_int(args, 1);
+    if (!ok1 || !ok2)
+    {
+        LOGE("Workspace coordinates should be integers!");
+        return {false, {}};
+    }
+
+    auto wsize = _view->get_output()->workspace->get_workspace_grid_size();
+    if (((0 <= x) && (x < wsize.width)) && ((0 <= y) && (y < wsize.height)))
+    {
+        return {true, {x, y}};
+    }
+
+    LOGE("Workspace coordinates out of bounds!");
+    return {false, {}};
+}
+
 wf::geometry_t view_action_interface_t::_get_workspace_grid_geometry(
     wf::output_t *output) const
 {
@@ -378,5 +419,16 @@ void view_action_interface_t::_resize(int w, int h)
 
         _view->resize(w, h);
     }
+}
+
+void view_action_interface_t::_assign_ws(wf::point_t point)
+{
+    auto output = _view->get_output();
+
+    auto delta = point - output->workspace->get_current_workspace();
+    auto size  = output->get_screen_size();
+
+    auto wm = _view->get_wm_geometry();
+    _view->move(wm.x + delta.x * size.width, wm.y + delta.y * size.height);
 }
 } // End namespace wf.

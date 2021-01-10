@@ -39,10 +39,14 @@ class view_action_interface_t : public action_interface_t
         const std::vector<variant_t> & args);
     std::tuple<bool, int, int> _validate_size(const std::vector<variant_t> & args);
 
+    std::tuple<bool, wf::point_t> _validate_ws(const std::vector<variant_t>& args);
+
     void _set_alpha(float alpha);
     void _set_geometry(int x, int y, int w, int h);
     void _move(int x, int y);
     void _resize(int w, int h);
+
+    void _assign_ws(wf::point_t point);
 
     wf::geometry_t _get_workspace_grid_geometry(wf::output_t *output) const;
 
