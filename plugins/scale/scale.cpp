@@ -540,7 +540,9 @@ class wayfire_scale : public wf::plugin_interface_t
     {
         if (last_selected_view)
         {
-            drag_helper->start_drag(last_selected_view, to, {});
+            wf::move_drag::drag_options_t opts;
+            opts.join_views = true;
+            drag_helper->start_drag(last_selected_view, to, opts);
             set_tiled_wobbly(last_selected_view, false);
             last_selected_view = nullptr;
         } else if (drag_helper->view)

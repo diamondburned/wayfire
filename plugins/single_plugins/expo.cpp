@@ -63,6 +63,7 @@ class wayfire_expo : public wf::plugin_interface_t
 
     wf::option_wrapper_t<bool> move_enable_snap_off{"move/enable_snap_off"};
     wf::option_wrapper_t<int> move_snap_off_threshold{"move/snap_off_threshold"};
+    wf::option_wrapper_t<bool> move_join_views{"move/join_views"};
 
     wf::shared_data::ref_ptr_t<wf::move_drag::core_drag_t> drag_helper;
 
@@ -239,8 +240,10 @@ class wayfire_expo : public wf::plugin_interface_t
             auto local  = input_coordinates_to_output_local_coordinates(
                 ev->grab_position + -offset);
 
-            translate_wobbly(ev->view, local - (ev->grab_position - offset));
-            // auto ws = viewpo
+            for (auto& v : wf::move_drag::get_target_views(ev->view, ev->join_views))
+            {
+                translate_wobbly(v, local - (ev->grab_position - offset));
+            }
 
             ev->grab_position = local + offset;
             wf::move_drag::adjust_view_on_output(ev);
@@ -415,6 +418,7 @@ class wayfire_expo : public wf::plugin_interface_t
                 opts.enable_snap_off = move_enable_snap_off &&
                     (view->fullscreen || view->tiled_edges);
                 opts.snap_off_threshold = move_snap_off_threshold;
+                opts.join_views = move_join_views;
 
                 drag_helper->start_drag(view, to + output_offset,
                     wf::move_drag::find_relative_grab(bbox, ws_coords), opts);

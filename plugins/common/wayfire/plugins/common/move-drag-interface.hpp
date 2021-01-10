@@ -1,5 +1,6 @@
 #pragma once
 
+#include <wayfire/nonstd/reverse.hpp>
 #include <wayfire/plugins/wobbly/wobbly-signal.hpp>
 #include <wayfire/object.hpp>
 #include <wayfire/output-layout.hpp>
@@ -75,6 +76,9 @@ struct drag_done_signal : public signal_data_t
 
     /** The view itself. */
     wayfire_view view;
+
+    /** Whether join-views was enabled for this drag. */
+    bool join_views;
 
     /**
      * The position relative to the view where the grab was.
@@ -230,6 +234,28 @@ struct dragged_view_t
     wf::geometry_t last_bbox;
 };
 
+inline wayfire_view get_toplevel(wayfire_view view)
+{
+    while (view->parent)
+    {
+        view = view->parent;
+    }
+
+    return view;
+}
+
+inline std::vector<wayfire_view> get_target_views(wayfire_view grabbed,
+    bool join_views)
+{
+    std::vector<wayfire_view> r = {grabbed};
+    if (join_views)
+    {
+        r = grabbed->enumerate_views();
+    }
+
+    return r;
+}
+
 /**
  * An object for storing per-output data.
  */
@@ -291,7 +317,7 @@ class output_data_t : public noncopyable_t, public custom_data_t
         auto fb = output->render->get_target_framebuffer();
         fb.geometry = output->get_layout_geometry();
 
-        for (auto& view : views)
+        for (auto& view : wf::reverse(views))
         {
             // Convert damage from output-local coordinates (last_bbox) to
             // output-layout coords.
@@ -356,15 +382,21 @@ class core_drag_t : public signal_provider_t
         wf::pointf_t relative,
         const drag_options_t& options)
     {
+        if (options.join_views)
+        {
+            grab_view = get_toplevel(grab_view);
+        }
+
         this->view   = grab_view;
         this->params = options;
 
-        std::vector<wayfire_view> target_views = {view};
-        if (options.join_views)
-        {
-            target_views = view->enumerate_views();
-        }
+        auto bbox = grab_view->get_bounding_box();
+        wf::point_t rel_grab_pos = {
+            int(bbox.x + relative.x * bbox.width),
+            int(bbox.y + relative.y * bbox.height),
+        };
 
+        auto target_views = get_target_views(grab_view, options.join_views);
         for (auto& v : target_views)
         {
             dragged_view_t dragged;
@@ -374,7 +406,8 @@ class core_drag_t : public signal_provider_t
             auto tr = std::make_unique<scale_around_grab_t>();
             dragged.transformer = {tr};
 
-            tr->relative_grab = relative;
+            tr->relative_grab = find_relative_grab(
+                v->get_bounding_box("wobbly"), rel_grab_pos);
             tr->grab_position = grab_position;
             tr->scale_factor.animate(options.initial_scale, options.initial_scale);
 
@@ -419,6 +452,11 @@ class core_drag_t : public signal_provider_t
     void start_drag(wayfire_view view, wf::point_t grab_position,
         const drag_options_t& options)
     {
+        if (options.join_views)
+        {
+            view = get_toplevel(view);
+        }
+
         auto bbox = view->get_bounding_box() +
             wf::origin(view->get_output()->get_layout_geometry());
         start_drag(view, grab_position,
@@ -472,6 +510,7 @@ class core_drag_t : public signal_provider_t
         data.relative_grab = all_views.front().transformer->relative_grab;
         data.view = view;
         data.focused_output = current_output;
+        data.join_views     = params.join_views;
 
         // Remove overlay hooks and damage outputs BEFORE popping the transformer
         for (auto& output : wf::get_core().output_layout->get_outputs())
@@ -575,46 +614,57 @@ inline void adjust_view_on_output(drag_done_signal *ev)
         return;
     }
 
+    auto parent = get_toplevel(ev->view);
     if (ev->view->get_output() != ev->focused_output)
     {
-        wf::get_core().move_view_to_output(ev->view, ev->focused_output, false);
+        wf::get_core().move_view_to_output(parent, ev->focused_output, false);
     }
 
-    auto bbox = ev->view->get_bounding_box("wobbly");
-    auto wm   = ev->view->get_wm_geometry();
-
-    wf::point_t wm_offset = wf::origin(wm) + -wf::origin(bbox);
-    auto output_delta     = -wf::origin(ev->focused_output->get_layout_geometry());
-
+    // Calculate the position we're leaving the view on
+    auto output_delta = -wf::origin(ev->focused_output->get_layout_geometry());
     auto grab = ev->grab_position + output_delta;
-    bbox = wf::move_drag::find_geometry_around(
-        wf::dimensions(bbox), grab, ev->relative_grab);
 
-    wf::point_t target = wf::origin(bbox) + wm_offset;
-    ev->view->move(target.x, target.y);
+    LOGI("we have ", ev->grab_position);
 
-    // Now, check the view's state and make sure it has the correct size and
-    // position.
-    if (ev->view->tiled_edges || ev->view->fullscreen)
+    auto output_geometry = ev->focused_output->get_relative_geometry();
+    auto current_ws = ev->focused_output->workspace->get_current_workspace();
+    wf::point_t target_ws{
+        (int)std::floor(1.0 * grab.x / output_geometry.width),
+        (int)std::floor(1.0 * grab.y / output_geometry.height),
+    };
+
+    auto views = get_target_views(ev->view, ev->join_views);
+    for (auto& v : views)
     {
-        auto output_geometry = ev->focused_output->get_relative_geometry();
-        auto current_ws = ev->focused_output->workspace->get_current_workspace();
-        wf::point_t target_ws{
-            (int)std::floor(grab.x / output_geometry.width),
-            (int)std::floor(grab.y / output_geometry.height),
-        };
+        auto bbox = v->get_bounding_box("wobbly");
+        auto wm   = v->get_wm_geometry();
+
+        wf::point_t wm_offset = wf::origin(wm) + -wf::origin(bbox);
+        bbox = wf::move_drag::find_geometry_around(
+            wf::dimensions(bbox), grab, ev->relative_grab);
+
+        wf::point_t target = wf::origin(bbox) + wm_offset;
+        v->move(target.x, target.y);
 
         target_ws = target_ws + current_ws;
-
-        if (ev->view->fullscreen)
+        if (v->fullscreen)
         {
-            ev->view->fullscreen_request(ev->focused_output, true, target_ws);
-        } else
+            v->fullscreen_request(ev->focused_output, true, target_ws);
+        } else if (v->tiled_edges)
         {
-            // Must be tiled if we're here
-            ev->view->tile_request(ev->view->tiled_edges, target_ws);
+            v->tile_request(v->tiled_edges, target_ws);
         }
     }
+
+    LOGI("target workspace is ", target_ws);
+
+    // Ensure that every view is visible on parent's main workspace
+    for (auto& v : parent->enumerate_views())
+    {
+        ev->focused_output->workspace->move_to_workspace(v, target_ws);
+    }
+
+    // ev->focused_output->focus_view(ev->view, true);
 }
 
 /**

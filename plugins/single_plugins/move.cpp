@@ -289,6 +289,7 @@ class wayfire_move : public wf::plugin_interface_t
         opts.enable_snap_off = move_enable_snap_off &&
             (view->fullscreen || view->tiled_edges);
         opts.snap_off_threshold = move_snap_off_threshold;
+        opts.join_views = join_views;
 
         // this->view   = view;
         drag_helper->start_drag(view, get_global_input_coords(), opts);
