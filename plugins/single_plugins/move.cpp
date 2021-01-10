@@ -88,6 +88,8 @@ class wayfire_move : public wf::plugin_interface_t
         {
             wf::move_drag::adjust_view_on_output(ev);
         }
+
+        deactivate();
     };
 
   public:
@@ -321,17 +323,6 @@ class wayfire_move : public wf::plugin_interface_t
         }
 
         drag_helper->handle_input_released();
-        deactivate();
-
-        /* The view was moved to another output or was destroyed,
-         * we don't have to do anything more */
-        if (view_destroyed)
-        {
-            // view->erase_data<wf::move_snap_helper_t>();
-            // this->view = nullptr;
-
-            return;
-        }
 
         // MOVE_HELPER->handle_input_released();
 

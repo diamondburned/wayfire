@@ -65,7 +65,8 @@ struct snap_off_signal : public signal_data_t
 /**
  * name: done
  * on: core_drag_t
- * when: Emitted after the drag operation has ended.
+ * when: Emitted after the drag operation has ended, and if the view is unmapped
+ *   while being dragged.
  */
 struct drag_done_signal : public signal_data_t
 {
@@ -363,6 +364,7 @@ class core_drag_t : public signal_provider_t
         }
 
         wf::get_core().set_cursor("grabbing");
+        view->connect_signal("unmapped", &on_view_unmap);
 
         // Set up snap-off
         if (params.enable_snap_off)
@@ -455,6 +457,7 @@ class core_drag_t : public signal_provider_t
 
         // Lastly, let the plugins handle what happens on drag end.
         emit_signal("done", &data);
+        on_view_unmap.disconnect();
     }
 
     void set_scale(double new_scale)
@@ -497,14 +500,26 @@ class core_drag_t : public signal_provider_t
             emit_signal("focus-output", &data);
         }
     }
+
+    wf::signal_connection_t on_view_unmap = [=] (auto *ev)
+    {
+        handle_input_released();
+    };
 };
 
 /**
  * Move the view to the target output and put it at the coordinates of the grab.
  * Also take into account view's fullscreen and tiled state.
+ *
+ * Unmapped views are ignored.
  */
 inline void adjust_view_on_output(drag_done_signal *ev)
 {
+    if (!ev->view->is_mapped())
+    {
+        return;
+    }
+
     if (ev->view->get_output() != ev->focused_output)
     {
         wf::get_core().move_view_to_output(ev->view, ev->focused_output, false);

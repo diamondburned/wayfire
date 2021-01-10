@@ -256,6 +256,8 @@ class wayfire_expo : public wf::plugin_interface_t
 
             move_started_ws = offscreen_point;
         }
+
+        this->state.button_pressed = false;
     };
 
     bool activate()
