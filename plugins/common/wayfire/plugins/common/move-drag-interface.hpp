@@ -637,6 +637,11 @@ inline void adjust_view_on_output(drag_done_signal *ev)
         (int)std::floor(1.0 * grab.x / output_geometry.width),
         (int)std::floor(1.0 * grab.y / output_geometry.height),
     };
+    target_ws = target_ws + current_ws;
+
+    auto gsize = ev->focused_output->workspace->get_workspace_grid_size();
+    target_ws.x = wf::clamp(target_ws.x, 0, gsize.width - 1);
+    target_ws.y = wf::clamp(target_ws.y, 0, gsize.height - 1);
 
     auto views = get_target_views(ev->view, ev->join_views);
     for (auto& v : views)
@@ -650,8 +655,6 @@ inline void adjust_view_on_output(drag_done_signal *ev)
 
         wf::point_t target = wf::origin(bbox) + wm_offset;
         v->move(target.x, target.y);
-
-        target_ws = target_ws + current_ws;
         if (v->fullscreen)
         {
             v->fullscreen_request(ev->focused_output, true, target_ws);
@@ -669,7 +672,7 @@ inline void adjust_view_on_output(drag_done_signal *ev)
         ev->focused_output->workspace->move_to_workspace(v, target_ws);
     }
 
-    // ev->focused_output->focus_view(ev->view, true);
+     ev->focused_output->focus_view(ev->view, true);
 }
 
 /**
