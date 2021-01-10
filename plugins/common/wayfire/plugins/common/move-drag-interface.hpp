@@ -382,6 +382,7 @@ class core_drag_t : public signal_provider_t
         wf::pointf_t relative,
         const drag_options_t& options)
     {
+        LOGI("staring drag");
         if (options.join_views)
         {
             grab_view = get_toplevel(grab_view);
@@ -540,6 +541,7 @@ class core_drag_t : public signal_provider_t
         }
 
         // Reset our state
+        LOGI("reset view");
         view = nullptr;
         all_views.clear();
         current_output     = nullptr;

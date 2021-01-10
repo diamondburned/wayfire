@@ -500,10 +500,13 @@ class wayfire_scale : public wf::plugin_interface_t
         auto view = wf::get_core().get_view_at(input_position);
         if (!view || (last_selected_view != view))
         {
+            last_selected_view = nullptr;
             // Operation was cancelled, for ex. dragged outside of the view
             return;
         }
 
+        // Reset last_selected_view, because it is no longer held
+        last_selected_view = nullptr;
         switch (button)
         {
           case BTN_LEFT:
