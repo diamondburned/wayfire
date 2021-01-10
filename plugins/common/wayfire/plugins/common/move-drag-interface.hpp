@@ -213,18 +213,36 @@ class scale_around_grab_t : public wf::view_transformer_t
 static const std::string move_drag_transformer = "move-drag-transformer";
 
 /**
+ * Represents a view which is being dragged.
+ * Multiple views exist only if join_views is set to true.
+ */
+struct dragged_view_t
+{
+    // The view being dragged
+    wayfire_view view;
+
+    // Its transformer
+    nonstd::observer_ptr<scale_around_grab_t> transformer;
+
+    // The last bounding box used for damage.
+    // This is needed in case the view resizes or something like that, in which
+    // case we don't have access to the previous bbox.
+    wf::geometry_t last_bbox;
+};
+
+/**
  * An object for storing per-output data.
  */
 class output_data_t : public noncopyable_t, public custom_data_t
 {
   public:
-    output_data_t(wf::output_t *output, wayfire_view view)
+    output_data_t(wf::output_t *output, std::vector<dragged_view_t> views)
     {
         output->render->add_effect(&damage_overlay, OUTPUT_EFFECT_PRE);
         output->render->add_effect(&render_overlay, OUTPUT_EFFECT_OVERLAY);
 
         this->output = output;
-        this->view   = view;
+        this->views  = views;
     }
 
     ~output_data_t()
@@ -235,27 +253,24 @@ class output_data_t : public noncopyable_t, public custom_data_t
 
     void apply_damage()
     {
-        // Note: bbox will be in output layout coordinates now, since this is
-        // how the transformer works
-        auto bbox = view->get_bounding_box();
-        bbox = bbox + -wf::origin(output->get_layout_geometry());
+        for (auto& view : views)
+        {
+            // Note: bbox will be in output layout coordinates now, since this is
+            // how the transformer works
+            auto bbox = view.view->get_bounding_box();
+            bbox = bbox + -wf::origin(output->get_layout_geometry());
 
-        output->render->damage(bbox);
-        output->render->damage(last_bbox);
+            output->render->damage(bbox);
+            output->render->damage(view.last_bbox);
 
-        last_bbox = bbox;
+            view.last_bbox = bbox;
+        }
     }
 
   private:
     wf::output_t *output;
-    wayfire_view view;
 
-    /**
-     * The last bounding box used for damage.
-     * This is needed in case the view resizes or something like that, in which
-     * case we don't have access to the previous bbox.
-     */
-    wf::geometry_t last_bbox = {0, 0, 0, 0};
+    std::vector<dragged_view_t> views;
 
     // An effect hook for damaging the view on the current output.
     //
@@ -276,14 +291,17 @@ class output_data_t : public noncopyable_t, public custom_data_t
         auto fb = output->render->get_target_framebuffer();
         fb.geometry = output->get_layout_geometry();
 
-        // Convert damage from output-local coordinates (last_bbox) to
-        // output-layout coords.
-        wf::region_t damage;
-        damage |= last_bbox + wf::origin(fb.geometry);
+        for (auto& view : views)
+        {
+            // Convert damage from output-local coordinates (last_bbox) to
+            // output-layout coords.
+            wf::region_t damage;
+            damage |= view.last_bbox + wf::origin(fb.geometry);
 
-        // Render the full view, always
-        // Not very efficient
-        view->render_transformed(fb, std::move(damage));
+            // Render the full view, always
+            // Not very efficient
+            view.view->render_transformed(fb, std::move(damage));
+        }
     };
 };
 
@@ -300,6 +318,11 @@ struct drag_options_t
      * snap-off is triggered.
      */
     int snap_off_threshold = 0;
+
+    /**
+     * Join views together, i.e move main window and dialogues together.
+     */
+    bool join_views = false;
 
     double initial_scale = 1.0;
 };
@@ -325,51 +348,69 @@ class core_drag_t : public signal_provider_t
     /**
      * Start drag.
      *
-     * @param view The view which is being dragged.
+     * @param grab_view The view which is being dragged.
      * @param grab_position The position of the input, in output-layout coordinates.
      * @param relative The position of the grab_position relative to view.
      */
-    void start_drag(wayfire_view view, wf::point_t grab_position,
+    void start_drag(wayfire_view grab_view, wf::point_t grab_position,
         wf::pointf_t relative,
         const drag_options_t& options)
     {
-        this->view   = view;
+        this->view   = grab_view;
         this->params = options;
 
-        // Setup view transform
-        auto tr = std::make_unique<scale_around_grab_t>();
-        this->transformer = {tr};
+        std::vector<wayfire_view> target_views = {view};
+        if (options.join_views)
+        {
+            target_views = view->enumerate_views();
+        }
 
-        tr->relative_grab = relative;
-        tr->grab_position = grab_position;
-        tr->scale_factor.animate(options.initial_scale, options.initial_scale);
+        for (auto& v : target_views)
+        {
+            dragged_view_t dragged;
+            dragged.view = v;
 
-        view->add_transformer(std::move(tr), move_drag_transformer);
+            // Setup view transform
+            auto tr = std::make_unique<scale_around_grab_t>();
+            dragged.transformer = {tr};
 
-        // Hide the view, we will render it as an overlay
-        view->set_visible(false);
-        view->damage();
+            tr->relative_grab = relative;
+            tr->grab_position = grab_position;
+            tr->scale_factor.animate(options.initial_scale, options.initial_scale);
 
-        // Make sure that wobbly has the correct geometry from the start!
-        rebuild_wobbly(view, grab_position, relative);
+            v->add_transformer(std::move(tr), move_drag_transformer);
 
-        // TODO: make this configurable!
-        start_wobbly_rel(view, relative);
+            // Hide the view, we will render it as an overlay
+            v->set_visible(false);
+            v->damage();
+
+            // Make sure that wobbly has the correct geometry from the start!
+            rebuild_wobbly(v, grab_position, relative);
+
+            // TODO: make this configurable!
+            start_wobbly_rel(v, relative);
+
+            this->all_views.push_back(dragged);
+            v->connect_signal("unmapped", &on_view_unmap);
+        }
 
         // Setup overlay hooks
         for (auto& output : wf::get_core().output_layout->get_outputs())
         {
             output->store_data(
-                std::make_unique<output_data_t>(output, view));
+                std::make_unique<output_data_t>(output, all_views));
         }
 
         wf::get_core().set_cursor("grabbing");
-        view->connect_signal("unmapped", &on_view_unmap);
 
         // Set up snap-off
         if (params.enable_snap_off)
         {
-            set_tiled_wobbly(view, true);
+            for (auto& v : all_views)
+            {
+                set_tiled_wobbly(v.view, true);
+            }
+
             grab_origin = grab_position;
             view_held_in_place = true;
         }
@@ -397,7 +438,10 @@ class core_drag_t : public signal_provider_t
             if (dst_sq >= thresh_sq)
             {
                 view_held_in_place = false;
-                set_tiled_wobbly(view, false);
+                for (auto& v : all_views)
+                {
+                    set_tiled_wobbly(v.view, false);
+                }
 
                 snap_off_signal data;
                 data.focus_output = current_output;
@@ -408,10 +452,13 @@ class core_drag_t : public signal_provider_t
         // Update wobbly independently of the grab position.
         // This is because while held in place, wobbly is anchored to its edges
         // so we can still move the grabbed point without moving the view.
-        move_wobbly(view, to.x, to.y);
-        if (!view_held_in_place)
+        for (auto& v : all_views)
         {
-            transformer->grab_position = to;
+            move_wobbly(v.view, to.x, to.y);
+            if (!view_held_in_place)
+            {
+                v.transformer->grab_position = to;
+            }
         }
 
         update_current_output(to);
@@ -421,8 +468,8 @@ class core_drag_t : public signal_provider_t
     {
         // Store data for the drag done signal
         drag_done_signal data;
-        data.grab_position = transformer->grab_position;
-        data.relative_grab = transformer->relative_grab;
+        data.grab_position = all_views.front().transformer->grab_position;
+        data.relative_grab = all_views.front().transformer->relative_grab;
         data.view = view;
         data.focused_output = current_output;
 
@@ -433,25 +480,29 @@ class core_drag_t : public signal_provider_t
             output->erase_data<output_data_t>();
         }
 
-        // Restore view to where it was before
-        view->set_visible(true);
-        view->pop_transformer(move_drag_transformer);
+        for (auto& v : all_views)
+        {
+            // Restore view to where it was before
+            v.view->set_visible(true);
+            v.view->pop_transformer(move_drag_transformer);
 
-        // Reset wobbly and leave it in output-LOCAL coordinates
-        end_wobbly(view);
+            // Reset wobbly and leave it in output-LOCAL coordinates
+            end_wobbly(v.view);
 
-        // Important! If the view scale was not 1.0, the wobbly model needs to be
-        // updated with the new size. Since this is an artificial resize, we need
-        // to make sure that the resize happens smoothly.
-        rebuild_wobbly(view, data.grab_position, data.relative_grab);
+            // Important! If the view scale was not 1.0, the wobbly model needs to be
+            // updated with the new size. Since this is an artificial resize, we need
+            // to make sure that the resize happens smoothly.
+            rebuild_wobbly(v.view, data.grab_position, data.relative_grab);
 
-        // Put wobbly back in output-local space, the plugins will take it from
-        // here.
-        translate_wobbly(view,
-            -wf::origin(view->get_output()->get_layout_geometry()));
+            // Put wobbly back in output-local space, the plugins will take it from
+            // here.
+            translate_wobbly(v.view,
+                -wf::origin(v.view->get_output()->get_layout_geometry()));
+        }
 
         // Reset our state
         view = nullptr;
+        all_views.clear();
         current_output     = nullptr;
         view_held_in_place = false;
 
@@ -462,7 +513,10 @@ class core_drag_t : public signal_provider_t
 
     void set_scale(double new_scale)
     {
-        transformer->scale_factor.animate(new_scale);
+        for (auto& view : all_views)
+        {
+            view.transformer->scale_factor.animate(new_scale);
+        }
     }
 
     // View currently being moved.
@@ -472,7 +526,8 @@ class core_drag_t : public signal_provider_t
     wf::output_t *current_output = NULL;
 
   private:
-    nonstd::observer_ptr<scale_around_grab_t> transformer;
+    // All views being dragged, more than one in case of join_views.
+    std::vector<dragged_view_t> all_views;
 
     // Current parameters
     drag_options_t params;
