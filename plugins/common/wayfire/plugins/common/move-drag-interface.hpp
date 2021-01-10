@@ -558,6 +558,11 @@ class core_drag_t : public signal_provider_t
         }
     }
 
+    bool is_view_held_in_place()
+    {
+        return view_held_in_place;
+    }
+
     // View currently being moved.
     wayfire_view view;
 

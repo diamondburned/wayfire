@@ -24,7 +24,6 @@
 
 class wayfire_move : public wf::plugin_interface_t
 {
-    wf::signal_callback_t move_request, view_destroyed;
     wf::button_callback activate_binding;
 
     wf::option_wrapper_t<bool> enable_snap{"move/enable_snap"};
@@ -69,6 +68,9 @@ class wayfire_move : public wf::plugin_interface_t
             {
                 grab_input(nullptr);
             }
+        } else
+        {
+            update_slot(0);
         }
     };
 
@@ -87,6 +89,23 @@ class wayfire_move : public wf::plugin_interface_t
         if ((ev->focused_output == output) && can_handle_drag())
         {
             wf::move_drag::adjust_view_on_output(ev);
+
+            if (enable_snap && (slot.slot_id != 0))
+            {
+                snap_signal data;
+                data.view = ev->view;
+                data.slot = (slot_type)slot.slot_id;
+                output->emit_signal("view-snap", &data);
+
+                /* Update slot, will hide the preview as well */
+                update_slot(0);
+            }
+
+            view_change_viewport_signal data;
+            data.view = ev->view;
+            data.to   = output->workspace->get_current_workspace();
+            data.old_viewport_invalid = false;
+            output->emit_signal("view-change-viewport", &data);
         }
 
         deactivate();
@@ -119,20 +138,21 @@ class wayfire_move : public wf::plugin_interface_t
         grab_interface->callbacks.pointer.button =
             [=] (uint32_t b, uint32_t state)
         {
-            /* the request usually comes with the left button ... */
-            if ((state == WLR_BUTTON_RELEASED) && was_client_request &&
-                (b == BTN_LEFT))
-            {
-                return input_pressed(state, false);
-            }
-
-            if (b != wf::buttonbinding_t(activate_button).get_button())
+            if (state != WLR_BUTTON_RELEASED)
             {
                 return;
             }
 
-            is_using_touch = false;
-            input_pressed(state, false);
+            uint32_t target_button = was_client_request ? BTN_LEFT :
+                (wf::buttonbinding_t(activate_button)).get_button();
+
+            if (target_button != b)
+            {
+                return;
+            }
+
+            drag_helper->handle_input_released();
+            return;
         };
 
         grab_interface->callbacks.pointer.motion = [=] (int x, int y)
@@ -159,36 +179,18 @@ class wayfire_move : public wf::plugin_interface_t
             input_pressed(WLR_BUTTON_RELEASED, false);
         };
 
-        move_request =
-            std::bind(std::mem_fn(&wayfire_move::move_requested), this, _1);
         output->connect_signal("view-move-request", &move_request);
 
         drag_helper->connect_signal("focus-output", &on_drag_output_focus);
         drag_helper->connect_signal("snap-off", &on_drag_snap_off);
         drag_helper->connect_signal("done", &on_drag_done);
-
-        // view_destroyed = [=] (wf::signal_data_t *data)
-        // {
-        // if (get_signaled_view(data) == view)
-        // {
-        // input_pressed(WLR_BUTTON_RELEASED, true);
-        // }
-        // };
-        // output->connect_signal("view-disappeared", &view_destroyed);
-        // output->connect_signal("view-move-check", &on_view_check_move);
     }
 
-    void move_requested(wf::signal_data_t *data)
+    wf::signal_connection_t move_request = [=] (auto data)
     {
-        auto view = get_signaled_view(data);
-        if (!view)
-        {
-            return;
-        }
-
         was_client_request = true;
-        initiate(view);
-    }
+        initiate(wf::get_signaled_view(data));
+    };
 
     /**
      * Calculate plugin activation flags for the view.
@@ -291,21 +293,8 @@ class wayfire_move : public wf::plugin_interface_t
         opts.snap_off_threshold = move_snap_off_threshold;
         opts.join_views = join_views;
 
-        // this->view   = view;
         drag_helper->start_drag(view, get_global_input_coords(), opts);
-
-// ensure_move_helper_at(view, get_input_coords());
-//
-// output->focus_view(view, true);
-// if (enable_snap)
-// {
-// slot.slot_id = 0;
-// }
-//
-// this->view = view;
-// output->render->set_redraw_always();
-// update_multi_output();
-//
+        slot.slot_id = 0;
         return true;
     }
 
@@ -313,7 +302,6 @@ class wayfire_move : public wf::plugin_interface_t
     {
         grab_interface->ungrab();
         output->deactivate_plugin(grab_interface);
-        // output->render->set_redraw_always(false);
     }
 
     void input_pressed(uint32_t state, bool view_destroyed)
@@ -324,68 +312,29 @@ class wayfire_move : public wf::plugin_interface_t
         }
 
         drag_helper->handle_input_released();
-
-        // MOVE_HELPER->handle_input_released();
-
-        ///* Delete any mirrors we have left, showing an animation */
-        // delete_mirror_views(true);
-
-        ///* Don't do snapping, etc for shell views */
-        // if (view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT)
-        // {
-        // view->erase_data<wf::move_snap_helper_t>();
-        // this->view = nullptr;
-        // return;
-        // }
-
-        // if (enable_snap && (slot.slot_id != 0))
-        // {
-        // snap_signal data;
-        // data.view = view;
-        // data.slot = (slot_type)slot.slot_id;
-        // output->emit_signal("view-snap", &data);
-
-        ///* Update slot, will hide the preview as well */
-        // update_slot(0);
-        // }
-
-        // view_change_viewport_signal workspace_may_changed;
-        // workspace_may_changed.view = this->view;
-        // workspace_may_changed.to   = output->workspace->get_current_workspace();
-        // workspace_may_changed.old_viewport_invalid = false;
-        // output->emit_signal("view-change-viewport", &workspace_may_changed);
-
-        // view->erase_data<wf::move_snap_helper_t>();
-        // this->view = nullptr;
     }
 
     /* Calculate the slot to which the view would be snapped if the input
      * is released at output-local coordinates (x, y) */
-    int calc_slot(int x, int y)
+    int calc_slot(wf::point_t point)
     {
         auto g = output->workspace->get_workarea();
-        if (!(output->get_relative_geometry() & wf::point_t{x, y}))
+        if (!(output->get_relative_geometry() & point))
         {
             return 0;
         }
 
-        // if (view && (output->workspace->get_view_layer(view) !=
-        // wf::LAYER_WORKSPACE))
-        // {
-        // return 0;
-        // }
-
         int threshold = snap_threshold;
 
-        bool is_left   = x - g.x <= threshold;
-        bool is_right  = g.x + g.width - x <= threshold;
-        bool is_top    = y - g.y < threshold;
-        bool is_bottom = g.x + g.height - y < threshold;
+        bool is_left   = point.x - g.x <= threshold;
+        bool is_right  = g.x + g.width - point.x <= threshold;
+        bool is_top    = point.y - g.y < threshold;
+        bool is_bottom = g.x + g.height - point.y < threshold;
 
-        bool is_far_left   = x - g.x <= quarter_snap_threshold;
-        bool is_far_right  = g.x + g.width - x <= quarter_snap_threshold;
-        bool is_far_top    = y - g.y < quarter_snap_threshold;
-        bool is_far_bottom = g.x + g.height - y < quarter_snap_threshold;
+        bool is_far_left   = point.x - g.x <= quarter_snap_threshold;
+        bool is_far_right  = g.x + g.width - point.x <= quarter_snap_threshold;
+        bool is_far_top    = point.y - g.y < quarter_snap_threshold;
+        bool is_far_bottom = g.x + g.height - point.y < quarter_snap_threshold;
 
         int slot = 0;
         if ((is_left && is_far_top) || (is_far_left && is_top))
@@ -472,7 +421,7 @@ class wayfire_move : public wf::plugin_interface_t
 
         workspace_switch_timer.set_timeout(workspace_switch_after, [this, tws] ()
         {
-            // output->workspace->request_workspace(tws, {this->view});
+            output->workspace->request_workspace(tws);
             return false;
         });
     }
@@ -546,46 +495,42 @@ class wayfire_move : public wf::plugin_interface_t
     {
         auto og     = output->get_layout_geometry();
         auto coords = get_global_input_coords() - wf::point_t{og.x, og.y};
-
-        /* If the currently moved view is not a toplevel view, but a child
-         * view, do not move it outside its outpup */
-        // if (view && view->parent)
-        // {
-        // double x   = coords.x;
-        // double y   = coords.y;
-        // auto local = output->get_relative_geometry();
-        // wlr_box_closest_point(&local, x, y, &x, &y);
-        // coords = {(int)x, (int)y};
-        // }
-
         return coords;
+    }
+
+    bool is_snap_enabled()
+    {
+        if (!enable_snap)
+        {
+            return false;
+        }
+
+        if (drag_helper->view->fullscreen ||
+            drag_helper->is_view_held_in_place())
+        {
+            return false;
+        }
+
+        if (drag_helper->view->role == wf::VIEW_ROLE_DESKTOP_ENVIRONMENT)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     void handle_input_motion()
     {
         drag_helper->handle_motion(get_global_input_coords());
 
-        auto input = get_input_coords();
-        // MOVE_HELPER->handle_motion(get_input_coords());
-
-        // update_multi_output();
-        /* View might get destroyed when updating multi-output */
-        if (false)
+        // Make sure that fullscreen views are not tiled.
+        // We allow movement of fullscreen views but they should always
+        // retain their fullscreen state (but they can be moved to other
+        // workspaces). Unsetting the fullscreen state can break some
+        // Xwayland games.
+        if (is_snap_enabled())
         {
-            // Make sure that fullscreen views are not tiled.
-            // We allow movement of fullscreen views but they should always
-            // retain their fullscreen state (but they can be moved to other
-            // workspaces). Unsetting the fullscreen state can break some
-            // Xwayland games.
-            // if (enable_snap && !MOVE_HELPER->is_view_fixed() &&
-            // !this->view->fullscreen)
-            // {
-            // update_slot(calc_slot(input.x, input.y));
-            // }
-        } else
-        {
-            /* View was destroyed, hide slot */
-            update_slot(0);
+            update_slot(calc_slot(get_input_coords()));
         }
     }
 
@@ -597,8 +542,6 @@ class wayfire_move : public wf::plugin_interface_t
         }
 
         output->rem_binding(&activate_binding);
-        output->disconnect_signal("view-move-request", &move_request);
-        output->disconnect_signal("view-disappeared", &view_destroyed);
     }
 };
 
