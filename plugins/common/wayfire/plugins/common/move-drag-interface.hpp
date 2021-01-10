@@ -672,7 +672,7 @@ inline void adjust_view_on_output(drag_done_signal *ev)
         ev->focused_output->workspace->move_to_workspace(v, target_ws);
     }
 
-     ev->focused_output->focus_view(ev->view, true);
+    ev->focused_output->focus_view(ev->view, true);
 }
 
 /**
