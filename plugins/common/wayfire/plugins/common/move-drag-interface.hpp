@@ -5,9 +5,11 @@
 #include <wayfire/output-layout.hpp>
 #include <wayfire/nonstd/observer_ptr.h>
 #include <wayfire/render-manager.hpp>
+#include <wayfire/workspace-manager.hpp>
 #include <wayfire/view-transform.hpp>
 #include <wayfire/util/duration.hpp>
 #include <wayfire/util/log.hpp>
+#include <cmath>
 
 
 namespace wf
@@ -499,6 +501,7 @@ class core_drag_t : public signal_provider_t
 
 /**
  * Move the view to the target output and put it at the coordinates of the grab.
+ * Also take into account view's fullscreen and tiled state.
  */
 inline void adjust_view_on_output(drag_done_signal *ev)
 {
@@ -519,6 +522,29 @@ inline void adjust_view_on_output(drag_done_signal *ev)
 
     wf::point_t target = wf::origin(bbox) + wm_offset;
     ev->view->move(target.x, target.y);
+
+    // Now, check the view's state and make sure it has the correct size and
+    // position.
+    if (ev->view->tiled_edges || ev->view->fullscreen)
+    {
+        auto output_geometry = ev->focused_output->get_relative_geometry();
+        auto current_ws = ev->focused_output->workspace->get_current_workspace();
+        wf::point_t target_ws{
+            (int)std::floor(grab.x / output_geometry.width),
+            (int)std::floor(grab.y / output_geometry.height),
+        };
+
+        target_ws = target_ws + current_ws;
+
+        if (ev->view->fullscreen)
+        {
+            ev->view->fullscreen_request(ev->focused_output, true, target_ws);
+        } else
+        {
+            // Must be tiled if we're here
+            ev->view->tile_request(ev->view->tiled_edges, target_ws);
+        }
+    }
 }
 
 /**

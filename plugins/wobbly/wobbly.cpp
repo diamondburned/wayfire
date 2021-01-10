@@ -370,7 +370,7 @@ class wobbly_state_grabbed_t : public iwobbly_state_t
 static void wobbly_tiled_state_handle_frame(const wobbly_model_t& model,
     const wf::geometry_t& old_bbox, const wf::geometry_t& new_bbox)
 {
-    if (wf::dimensions(new_bbox) != wf::dimensions(old_bbox))
+    if (new_bbox != old_bbox)
     {
         LOGI("forcing new geometry ", new_bbox);
         /* Bounding box (excluding the wobbly transformer) changed, this
@@ -721,11 +721,21 @@ class wf_wobbly : public wf::view_transformer_t
      */
     void update_wobbly_state(bool start_grab, wf::point_t grab, bool end_grab)
     {
-        bool tiled = (view->tiled_edges || view->fullscreen) || force_tile;
         bool was_grabbed =
             (state->get_wobbly_state() == wf::WOBBLY_STATE_GRABBED ||
                 state->get_wobbly_state() == wf::WOBBLY_STATE_TILED_GRABBED);
         bool grabbed = (start_grab || was_grabbed) && !end_grab;
+
+        bool tiled = false;
+        if (grabbed)
+        {
+            // If the view is grabbed, the grabbing plugin says whether to tile
+            // or not
+            tiled = force_tile;
+        } else
+        {
+            tiled = (force_tile || view->tiled_edges) || view->fullscreen;
+        }
 
         LOGI("next state: ", tiled, " ", grabbed);
 
