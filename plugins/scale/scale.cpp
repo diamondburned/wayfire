@@ -542,8 +542,10 @@ class wayfire_scale : public wf::plugin_interface_t
         {
             wf::move_drag::drag_options_t opts;
             opts.join_views = true;
+            opts.enable_snap_off    = true;
+            opts.snap_off_threshold = 200;
+
             drag_helper->start_drag(last_selected_view, to, opts);
-            set_tiled_wobbly(last_selected_view, false);
             last_selected_view = nullptr;
         } else if (drag_helper->view)
         {
@@ -1262,7 +1264,7 @@ class wayfire_scale : public wf::plugin_interface_t
         auto ev = static_cast<wf::move_drag::drag_focus_output_signal*>(data);
         if ((ev->focus_output == output) && can_handle_drag())
         {
-            drag_helper->set_scale(0.8);
+            drag_helper->set_scale(1.0);
         }
     };
 
