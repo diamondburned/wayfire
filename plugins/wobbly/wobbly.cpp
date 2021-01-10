@@ -500,7 +500,7 @@ class wobbly_state_floating_t : public iwobbly_state_t
     void handle_workspace_change(wf::point_t old, wf::point_t cur) override
     {
         LOGI("workspace change from ", old, " to ", cur);
-        auto size = view->get_output()->get_screen_size();
+        auto size  = view->get_output()->get_screen_size();
         auto delta = old - cur;
         translate_model(delta.x * size.width, delta.y * size.height);
         handle_wm_geometry(view->get_wm_geometry());
@@ -538,7 +538,7 @@ class wobbly_state_free_t : public iwobbly_state_t
 
     void handle_workspace_change(wf::point_t old, wf::point_t cur) override
     {
-        auto size = view->get_output()->get_screen_size();
+        auto size  = view->get_output()->get_screen_size();
         auto delta = old - cur;
         wobbly_translate(model.get(), delta.x * size.width, delta.y * size.height);
     }
@@ -607,7 +607,8 @@ class wf_wobbly : public wf::view_transformer_t
             wf::OUTPUT_EFFECT_PRE);
 
         on_workspace_changed.disconnect();
-        view->get_output()->connect_signal("workspace-changed", &on_workspace_changed);
+        view->get_output()->connect_signal("workspace-changed",
+            &on_workspace_changed);
     };
 
     std::unique_ptr<wobbly_surface> model;
@@ -644,7 +645,8 @@ class wf_wobbly : public wf::view_transformer_t
 
         pre_hook = [=] () { update_model(); };
         view->get_output()->render->add_effect(&pre_hook, wf::OUTPUT_EFFECT_PRE);
-        view->get_output()->connect_signal("workspace-changed", &on_workspace_changed);
+        view->get_output()->connect_signal("workspace-changed",
+            &on_workspace_changed);
 
         view->connect_signal("unmapped", &view_removed);
         view->connect_signal("tiled", &view_state_changed);
