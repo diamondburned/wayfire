@@ -373,6 +373,16 @@ void wayfire_layer_shell_view::initialize()
 
     on_commit_unmapped.set_callback([&] (void*)
     {
+        if (!this->get_output())
+        {
+            // This case can happen in the following scenario:
+            // 1. Create output X
+            // 2. Client opens a layer-shell surface Y on X
+            // 3. X is destroyed, Y's output is now NULL
+            // 4. Y commits
+            return;
+        }
+
         wf_layer_shell_manager::get_instance().arrange_unmapped_view(this);
     });
 
