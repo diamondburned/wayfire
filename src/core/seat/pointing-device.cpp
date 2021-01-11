@@ -9,6 +9,8 @@ wf::pointing_device_t::pointing_device_t(wlr_input_device *dev) :
 wf::pointing_device_t::config_t wf::pointing_device_t::config;
 void wf::pointing_device_t::config_t::load()
 {
+    middle_emulation.load_option("input/middle_emulation");
+
     mouse_scroll_speed.load_option("input/mouse_scroll_speed");
     mouse_cursor_speed.load_option("input/mouse_cursor_speed");
     touchpad_cursor_speed.load_option("input/touchpad_cursor_speed");
@@ -57,6 +59,11 @@ void wf::pointing_device_t::update_options()
 
     auto dev = wlr_libinput_get_device_handle(get_wlr_handle());
     assert(dev);
+
+    libinput_device_config_middle_emulation_set_enabled(dev,
+        config.middle_emulation ?
+        LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED :
+        LIBINPUT_CONFIG_MIDDLE_EMULATION_DISABLED);
 
     /* we are configuring a touchpad */
     if (libinput_device_config_tap_get_finger_count(dev) > 0)
