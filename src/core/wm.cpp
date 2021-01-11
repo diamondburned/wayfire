@@ -156,14 +156,20 @@ void wayfire_focus::check_focus_surface(wf::surface_interface_t *focus)
     auto main_surface = focus ? focus->get_main_surface() : nullptr;
     auto view = dynamic_cast<wf::view_interface_t*>(main_surface);
 
-    if (!view || !view->is_mapped() || !view->get_keyboard_focus_surface() ||
-        !output->activate_plugin(grab_interface))
+    if (!view || !view->is_mapped() ||
+        !output->can_activate_plugin(grab_interface->capabilities))
     {
         return;
     }
 
-    output->deactivate_plugin(grab_interface);
-    view->get_output()->focus_view(view->self(), true);
+    auto target_wo = view->get_output();
+    if (view->get_keyboard_focus_surface())
+    {
+        target_wo->focus_view(view->self(), true);
+    } else
+    {
+        target_wo->workspace->bring_to_front(view);
+    }
 }
 
 void wayfire_focus::fini()
