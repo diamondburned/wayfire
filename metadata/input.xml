@@ -60,7 +60,7 @@
 		<!-- libinput configuration -->
 		<option name="middle_emulation" type="bool">
 			<_short>Middle-click emulation</_short>
-			<_long>Sets the middle button emulation property by hitting the left and right buttons simultaneously.</_long>
+			<_long>Enables middle button emulation by hitting the left and right buttons simultaneously.</_long>
 			<default>false</default>
 		</option>
 		<option name="mouse_accel_profile" type="string">
