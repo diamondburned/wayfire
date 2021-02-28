@@ -9,29 +9,72 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 
-#define INOT_BUF_SIZE (1024 * sizeof(inotify_event))
-static char buf[INOT_BUF_SIZE];
-
+#define INOT_BUF_SIZE (sizeof(inotify_event) + NAME_MAX + 1)
 
 static std::string config_dir, config_file;
 wf::config::config_manager_t *cfg_manager;
 
-static void reload_config(int fd)
+static void readd_watch(int fd)
 {
-    wf::config::load_configuration_options_from_file(*cfg_manager, config_file);
     inotify_add_watch(fd, config_dir.c_str(), IN_CREATE);
     inotify_add_watch(fd, config_file.c_str(), IN_MODIFY);
 }
 
+static void reload_config(int fd)
+{
+    wf::config::load_configuration_options_from_file(*cfg_manager, config_file);
+    readd_watch(fd);
+}
+
 static int handle_config_updated(int fd, uint32_t mask, void *data)
 {
+    if ((mask & WL_EVENT_READABLE) == 0)
+    {
+        return 0;
+    }
+
     LOGD("Reloading configuration file");
 
-    /* read, but don't use */
-    read(fd, buf, INOT_BUF_SIZE);
-    reload_config(fd);
+    char buf[INOT_BUF_SIZE] __attribute__((aligned(alignof(inotify_event))));
 
-    wf::get_core().emit_signal("reload-config", nullptr);
+    bool should_reload = false;
+    inotify_event *event;
+
+    while (true)
+    {
+        auto len = read(fd, buf, INOT_BUF_SIZE);
+        if (len < 0)
+        {
+            break;
+        }
+
+        for (char *ptr = buf; ptr < (buf + len);
+             ptr += sizeof(inotify_event) + event->len)
+        {
+            event = reinterpret_cast<inotify_event*>(ptr);
+
+            if (event->len == 0)
+            {
+                // is file, probably the config file itself
+                should_reload = true;
+                continue;
+            }
+
+            if (config_file == event->name)
+            {
+                should_reload = true;
+            }
+        }
+    }
+
+    if (should_reload)
+    {
+        reload_config(fd);
+        wf::get_core().emit_signal("reload-config", nullptr);
+    } else
+    {
+        readd_watch(fd);
+    }
 
     return 0;
 }
