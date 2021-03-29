@@ -33,42 +33,40 @@ static int handle_config_updated(int fd, uint32_t mask, void *data)
         return 0;
     }
 
-    LOGD("Reloading configuration file");
-
     char buf[INOT_BUF_SIZE] __attribute__((aligned(alignof(inotify_event))));
 
     bool should_reload = false;
     inotify_event *event;
 
-    while (true)
+    auto len = read(fd, buf, INOT_BUF_SIZE);
+    if (len < 0)
     {
-        auto len = read(fd, buf, INOT_BUF_SIZE);
-        if (len < 0)
+        return 0;
+    }
+
+    for (char *ptr = buf;
+         ptr < (buf + len);
+         ptr += sizeof(inotify_event) + event->len)
+    {
+        event = reinterpret_cast<inotify_event*>(ptr);
+
+        if (event->len == 0)
         {
-            break;
+            // is file, probably the config file itself
+            should_reload = true;
+            continue;
         }
 
-        for (char *ptr = buf; ptr < (buf + len);
-             ptr += sizeof(inotify_event) + event->len)
+        if (config_file == event->name)
         {
-            event = reinterpret_cast<inotify_event*>(ptr);
-
-            if (event->len == 0)
-            {
-                // is file, probably the config file itself
-                should_reload = true;
-                continue;
-            }
-
-            if (config_file == event->name)
-            {
-                should_reload = true;
-            }
+            should_reload = true;
         }
     }
 
     if (should_reload)
     {
+        LOGD("Reloading configuration file");
+
         reload_config(fd);
         wf::get_core().emit_signal("reload-config", nullptr);
     } else
@@ -98,7 +96,7 @@ class dynamic_ini_config_t : public wf::config_backend_t
         config = wf::config::build_configuration(
             get_xml_dirs(), SYSCONFDIR "/wayfire/defaults.ini", config_file);
 
-        int inotify_fd = inotify_init1(IN_CLOEXEC);
+        int inotify_fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
         reload_config(inotify_fd);
 
         wl_event_loop_add_fd(wl_display_get_event_loop(display),
