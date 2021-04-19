@@ -14,10 +14,12 @@
 static std::string config_dir, config_file;
 wf::config::config_manager_t *cfg_manager;
 
+static int wd_cfg_file;
+
 static void readd_watch(int fd)
 {
     inotify_add_watch(fd, config_dir.c_str(), IN_CREATE);
-    inotify_add_watch(fd, config_file.c_str(), IN_MODIFY);
+    wd_cfg_file = inotify_add_watch(fd, config_file.c_str(), IN_MODIFY);
 }
 
 static void reload_config(int fd)
@@ -38,29 +40,30 @@ static int handle_config_updated(int fd, uint32_t mask, void *data)
     bool should_reload = false;
     inotify_event *event;
 
+    // Reading from the inotify FD is guaranteed to not read partial events.
+    // From inotify(7):
+    // Each successful read(2) returns a buffer containing
+    // one or more [..] structures
     auto len = read(fd, buf, INOT_BUF_SIZE);
     if (len < 0)
     {
         return 0;
     }
 
+    auto cfg_file_basename =
+        config_file.substr(config_file.find_last_of('/'));
+
     for (char *ptr = buf;
          ptr < (buf + len);
          ptr += sizeof(inotify_event) + event->len)
     {
         event = reinterpret_cast<inotify_event*>(ptr);
-
-        if (event->len == 0)
-        {
-            // is file, probably the config file itself
-            should_reload = true;
-            continue;
-        }
-
-        if (config_file == event->name)
-        {
-            should_reload = true;
-        }
+        // We reload in two main cases:
+        //
+        // - Config file itself was modified
+        // - Config file was created inside parent directory
+        should_reload |=
+            (event->wd == wd_cfg_file) || (cfg_file_basename == event->name);
     }
 
     if (should_reload)
@@ -96,7 +99,7 @@ class dynamic_ini_config_t : public wf::config_backend_t
         config = wf::config::build_configuration(
             get_xml_dirs(), SYSCONFDIR "/wayfire/defaults.ini", config_file);
 
-        int inotify_fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+        int inotify_fd = inotify_init1(IN_CLOEXEC);
         reload_config(inotify_fd);
 
         wl_event_loop_add_fd(wl_display_get_event_loop(display),
